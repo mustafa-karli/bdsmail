@@ -15,9 +15,13 @@ import (
 )
 
 type Relay struct {
-	mu       sync.RWMutex
-	dkimKeys map[string]crypto.Signer // domain -> private key
-	selector string
+	mu            sync.RWMutex
+	dkimKeys      map[string]crypto.Signer // domain -> private key
+	selector      string
+	relayHost     string // external SMTP relay host (e.g. smtp.sendgrid.net)
+	relayPort     string // external relay port (default 587)
+	relayUser     string
+	relayPassword string
 }
 
 func NewRelay(dkimKeys map[string]crypto.Signer, selector string) *Relay {
@@ -25,6 +29,17 @@ func NewRelay(dkimKeys map[string]crypto.Signer, selector string) *Relay {
 		dkimKeys = make(map[string]crypto.Signer)
 	}
 	return &Relay{dkimKeys: dkimKeys, selector: selector}
+}
+
+// SetExternalRelay configures an external SMTP relay for outbound delivery.
+func (r *Relay) SetExternalRelay(host, port, user, password string) {
+	r.relayHost = host
+	r.relayPort = port
+	r.relayUser = user
+	r.relayPassword = password
+	if r.relayHost != "" {
+		log.Printf("External SMTP relay configured: %s:%s", host, port)
+	}
 }
 
 // AddDKIMKey adds a DKIM signing key for a domain at runtime.
@@ -35,6 +50,12 @@ func (r *Relay) AddDKIMKey(domain string, key crypto.Signer) {
 }
 
 func (r *Relay) Send(from string, to []string, subject, contentType, body, messageID string) error {
+	// Use external relay if configured
+	if r.relayHost != "" {
+		return r.sendViaExternalRelay(from, to, subject, contentType, body, messageID)
+	}
+
+	// Direct delivery via MX lookup
 	byDomain := make(map[string][]string)
 	for _, addr := range to {
 		parts := strings.SplitN(addr, "@", 2)
@@ -52,6 +73,24 @@ func (r *Relay) Send(from string, to []string, subject, contentType, body, messa
 		}
 	}
 	return nil
+}
+
+func (r *Relay) sendViaExternalRelay(from string, to []string, subject, contentType, body, messageID string) error {
+	addr := r.relayHost + ":" + r.relayPort
+	msg := buildMessage(from, to, subject, contentType, body, messageID)
+	signed := r.signDKIM(from, msg)
+
+	auth := smtp.PlainAuth("", r.relayUser, r.relayPassword, r.relayHost)
+
+	for attempt := 0; attempt < 3; attempt++ {
+		err := smtp.SendMail(addr, auth, from, to, signed)
+		if err == nil {
+			return nil
+		}
+		log.Printf("external relay attempt %d to %s failed: %v", attempt+1, addr, err)
+		time.Sleep(time.Duration(attempt+1) * 5 * time.Second)
+	}
+	return fmt.Errorf("external relay failed after 3 attempts to %s", addr)
 }
 
 func (r *Relay) sendToDomain(from string, to []string, domain, subject, contentType, body, messageID string) error {

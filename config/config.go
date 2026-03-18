@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 type Config struct {
@@ -22,9 +24,13 @@ type Config struct {
 	DatabaseURL  string
 	DKIMKeyDir   string
 	DKIMSelector string
-	AdminSecret  string
-	AcmeWebroot  string
-	EnvFile      string
+	AdminSecret    string
+	AcmeWebroot    string
+	EnvFile        string
+	RelayHost      string
+	RelayPort      string
+	RelayUser      string
+	RelayPassword  string
 }
 
 // HostToDomain maps a Host header like "mail.domain1.com" to "domain1.com".
@@ -120,8 +126,14 @@ func (c *Config) PersistDomains() error {
 	return os.WriteFile(c.EnvFile, []byte(strings.Join(lines, "\n")+"\n"), 0644)
 }
 
-func Load() *Config {
-	domainsStr := getEnv("BDS_DOMAINS", "mydomain.com")
+func Load() (*Config, EnvMap) {
+	envFile := "/opt/bdsmail/.env"
+	if v := os.Getenv("BDS_ENV_FILE"); v != "" {
+		envFile = v
+	}
+	env := loadEnvFile(envFile)
+
+	domainsStr := env.Get("BDS_DOMAINS", "mydomain.com")
 	var domains []string
 	for _, d := range strings.Split(domainsStr, ",") {
 		d = strings.TrimSpace(d)
@@ -132,26 +144,80 @@ func Load() *Config {
 
 	return &Config{
 		Domains:      domains,
-		SMTPPort:     getEnv("BDS_SMTP_PORT", "2525"),
-		POP3Port:     getEnv("BDS_POP3_PORT", "1100"),
-		IMAPPort:     getEnv("BDS_IMAP_PORT", "1430"),
-		HTTPSPort:    getEnv("BDS_HTTPS_PORT", "8443"),
-		HTTPPort:     getEnv("BDS_HTTP_PORT", "8080"),
-		TLSCert:      getEnv("BDS_TLS_CERT", ""),
-		TLSKey:       getEnv("BDS_TLS_KEY", ""),
-		GCSBucket:    getEnv("BDS_GCS_BUCKET", "bdsmail-bodies"),
-		DatabaseURL:  getEnv("DATABASE_URL", "postgres://localhost:5432/bdsmail?sslmode=disable"),
-		DKIMKeyDir:   getEnv("BDS_DKIM_KEY_DIR", ""),
-		DKIMSelector: getEnv("BDS_DKIM_SELECTOR", "default"),
-		AdminSecret:  getEnv("BDS_ADMIN_SECRET", ""),
-		AcmeWebroot:  getEnv("BDS_ACME_WEBROOT", "/opt/bdsmail/acme"),
-		EnvFile:      getEnv("BDS_ENV_FILE", ""),
-	}
+		SMTPPort:     env.Get("BDS_SMTP_PORT", "2525"),
+		POP3Port:     env.Get("BDS_POP3_PORT", "1100"),
+		IMAPPort:     env.Get("BDS_IMAP_PORT", "1430"),
+		HTTPSPort:    env.Get("BDS_HTTPS_PORT", "8443"),
+		HTTPPort:     env.Get("BDS_HTTP_PORT", "8080"),
+		TLSCert:      env.Get("BDS_TLS_CERT", ""),
+		TLSKey:       env.Get("BDS_TLS_KEY", ""),
+		GCSBucket:    env.Get("BDS_GCS_BUCKET", "bdsmail-bodies"),
+		DatabaseURL:  env.Get("DATABASE_URL", "postgres://localhost:5432/bdsmail?sslmode=disable"),
+		DKIMKeyDir:   env.Get("BDS_DKIM_KEY_DIR", ""),
+		DKIMSelector: env.Get("BDS_DKIM_SELECTOR", "default"),
+		AdminSecret:  env.Get("BDS_ADMIN_SECRET", ""),
+		AcmeWebroot:  env.Get("BDS_ACME_WEBROOT", "/opt/bdsmail/acme"),
+		EnvFile:       envFile,
+		RelayHost:     env.Get("BDS_RELAY_HOST", ""),
+		RelayPort:     env.Get("BDS_RELAY_PORT", "587"),
+		RelayUser:     env.Get("BDS_RELAY_USER", ""),
+		RelayPassword: env.Get("BDS_RELAY_PASSWORD", ""),
+	}, env
 }
 
-func getEnv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
+type EnvMap map[string]string
+
+func (e EnvMap) Get(key, fallback string) string {
+	if v, ok := e[key]; ok && v != "" {
 		return v
 	}
 	return fallback
+}
+
+func (e EnvMap) GetBool(key string, fallback bool) bool {
+	v, ok := e[key]
+	if !ok || v == "" {
+		return fallback
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return fallback
+	}
+	return b
+}
+
+func (e EnvMap) GetDuration(key string, fallback time.Duration) time.Duration {
+	v, ok := e[key]
+	if !ok || v == "" {
+		return fallback
+	}
+	secs, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return time.Duration(secs) * time.Second
+}
+
+// loadEnvFile reads a .env file and returns a map of key=value pairs.
+func loadEnvFile(path string) EnvMap {
+	env := make(EnvMap)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return env
+	}
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		value := strings.TrimSpace(parts[1])
+		env[key] = value
+	}
+	return env
 }

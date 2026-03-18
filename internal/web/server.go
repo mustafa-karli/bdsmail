@@ -28,8 +28,23 @@ type tmplRenderer struct {
 }
 
 func (t *tmplRenderer) render(w http.ResponseWriter, name string, data pageData) {
-	err := t.tmpl.ExecuteTemplate(w, name, data)
+	// Clone the template set and add page-specific aliases
+	// so layout.html's {{template "page-title" .}} and {{template "page-content" .}}
+	// resolve to the correct page-specific blocks (e.g. "title-login", "content-login").
+	clone, err := t.tmpl.Clone()
 	if err != nil {
+		log.Printf("template clone error: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	aliasTemplate := `{{define "page-title"}}{{template "title-` + t.pageName + `" .}}{{end}}` +
+		`{{define "page-content"}}{{template "content-` + t.pageName + `" .}}{{end}}`
+	if _, err := clone.Parse(aliasTemplate); err != nil {
+		log.Printf("template alias error: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	if err := clone.ExecuteTemplate(w, name, data); err != nil {
 		log.Printf("template error: %v", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 	}

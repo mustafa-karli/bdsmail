@@ -1,5 +1,6 @@
-{{define "title"}}{{.Message.Subject}}{{end}}
-{{define "content"}}
+{{define "title-read"}}{{if .Message}}{{.Message.Subject}}{{else}}Message{{end}}{{end}}
+{{define "content-read"}}
+{{if .Message}}
 <div class="card">
     <div class="message-header">
         <h2>{{if .Message.Subject}}{{.Message.Subject}}{{else}}(no subject){{end}}</h2>
@@ -24,4 +25,10 @@
         </form>
     </div>
 </div>
+{{else}}
+<div class="card">
+    <p>Message not found.</p>
+    <a href="/inbox" class="btn btn-secondary btn-sm">Back to Inbox</a>
+</div>
+{{end}}
 {{end}}

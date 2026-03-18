@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	gosmtp "github.com/emersion/go-smtp"
+	"github.com/mustafakarli/bdsmail/config"
 	"github.com/mustafakarli/bdsmail/internal/security"
 	"github.com/mustafakarli/bdsmail/internal/store"
 )
@@ -18,10 +19,12 @@ import (
 type Backend struct {
 	store   *store.Store
 	checker *security.Checker
+	relay   *Relay
+	cfg     *config.Config
 }
 
-func NewBackend(s *store.Store, checker *security.Checker) *Backend {
-	return &Backend{store: s, checker: checker}
+func NewBackend(s *store.Store, checker *security.Checker, relay *Relay, cfg *config.Config) *Backend {
+	return &Backend{store: s, checker: checker, relay: relay, cfg: cfg}
 }
 
 func (b *Backend) NewSession(c *gosmtp.Conn) (gosmtp.Session, error) {
@@ -112,11 +115,72 @@ func (s *Session) Data(r io.Reader) error {
 	}
 
 	ctx := context.Background()
+	bodyText := string(bodyBytes)
+
+	if s.authed {
+		// Authenticated user: treat as outbound mail
+		return s.handleOutbound(ctx, body, from, to, cc, bcc, subject, contentType, bodyText)
+	}
+
+	// Unauthenticated: treat as inbound mail
+	return s.handleInbound(ctx, body, from, to, cc, bcc, subject, contentType, bodyText)
+}
+
+func (s *Session) handleOutbound(ctx context.Context, rawEmail []byte, from string, to, cc, bcc []string, subject, contentType, bodyText string) error {
+	// Run outbound security checks
+	if s.backend.checker != nil {
+		result := s.backend.checker.CheckOutbound(ctx, bodyText, contentType)
+		if result.Reject {
+			log.Printf("blocked outbound mail from %s: %s", s.user, result.Reason)
+			return &gosmtp.SMTPError{
+				Code:    550,
+				Message: "Message rejected: " + result.Reason,
+			}
+		}
+	}
+
+	// Save sender's copy in Sent folder + deliver to local recipients
+	messageID, err := s.backend.store.SaveOutgoingMail(ctx, s.user, from, to, cc, bcc, subject, contentType, bodyText)
+	if err != nil {
+		log.Printf("failed to save outgoing mail: %v", err)
+		return &gosmtp.SMTPError{
+			Code:    451,
+			Message: "Internal server error",
+		}
+	}
+
+	// Relay to external recipients in background
+	allAddrs := make([]string, 0, len(to)+len(cc)+len(bcc))
+	allAddrs = append(allAddrs, to...)
+	allAddrs = append(allAddrs, cc...)
+	allAddrs = append(allAddrs, bcc...)
+
+	var external []string
+	for _, addr := range allAddrs {
+		_, domain := store.SplitEmail(addr)
+		if !s.backend.cfg.IsDomainServed(domain) {
+			external = append(external, addr)
+		}
+	}
+
+	if len(external) > 0 && s.backend.relay != nil {
+		go func() {
+			err := s.backend.relay.Send(s.user, external, subject, contentType, bodyText, messageID)
+			if err != nil {
+				log.Printf("SMTP relay error: %v", err)
+			}
+		}()
+	}
+
+	return nil
+}
+
+func (s *Session) handleInbound(ctx context.Context, rawEmail []byte, from string, to, cc, bcc []string, subject, contentType, bodyText string) error {
 	folder := "INBOX"
 
-	// Run security checks before saving
+	// Run inbound security checks
 	if s.backend.checker != nil {
-		result := s.backend.checker.CheckInbound(ctx, body, string(bodyBytes), contentType, s.remoteIP, from, s.ehloHostname)
+		result := s.backend.checker.CheckInbound(ctx, rawEmail, bodyText, contentType, s.remoteIP, from, s.ehloHostname)
 		if result.Reject {
 			log.Printf("rejected mail from %s: %s", from, result.Reason)
 			return &gosmtp.SMTPError{
@@ -132,7 +196,7 @@ func (s *Session) Data(r io.Reader) error {
 		}
 	}
 
-	err = s.backend.store.SaveIncomingMail(ctx, from, to, cc, bcc, subject, contentType, string(bodyBytes), folder)
+	err := s.backend.store.SaveIncomingMail(ctx, from, to, cc, bcc, subject, contentType, bodyText, folder)
 	if err != nil {
 		log.Printf("failed to save incoming mail: %v", err)
 		return &gosmtp.SMTPError{

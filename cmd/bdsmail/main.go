@@ -36,7 +36,7 @@ func main() {
 	addDomain := flag.String("adddomain", "", "Add a new domain to the running server (e.g. newdomain.com)")
 	flag.Parse()
 
-	cfg := config.Load()
+	cfg, env := config.Load()
 	ctx := context.Background()
 
 	// Handle adddomain command (talks to running server via admin API)
@@ -92,7 +92,7 @@ func main() {
 	dkimKeys := loadDKIMKeys(cfg.DKIMKeyDir)
 
 	// Initialize security checker
-	secCfg := security.LoadConfig()
+	secCfg := security.LoadConfig(env)
 	var checker *security.Checker
 	if secCfg.AnyEnabled() {
 		checker, err = security.NewChecker(secCfg)
@@ -104,6 +104,9 @@ func main() {
 
 	// Create SMTP relay for outbound delivery
 	relay := smtpserver.NewRelay(dkimKeys, cfg.DKIMSelector)
+	if cfg.RelayHost != "" {
+		relay.SetExternalRelay(cfg.RelayHost, cfg.RelayPort, cfg.RelayUser, cfg.RelayPassword)
+	}
 
 	// Initialize TLS cert reloader (if TLS is configured)
 	var certReloader *tlsutil.CertReloader
@@ -119,7 +122,7 @@ func main() {
 	go startACMEServer(cfg)
 
 	// Start SMTP server
-	smtpSrv := smtpserver.NewServer(cfg, s, checker, certReloader)
+	smtpSrv := smtpserver.NewServer(cfg, s, checker, relay, certReloader)
 	go func() {
 		if err := smtpSrv.Start(); err != nil {
 			log.Printf("SMTP server error: %v", err)

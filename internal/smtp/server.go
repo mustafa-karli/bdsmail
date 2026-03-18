@@ -15,8 +15,8 @@ type Server struct {
 	srv *gosmtp.Server
 }
 
-func NewServer(cfg *config.Config, s *store.Store, checker *security.Checker, certReloader *tlsutil.CertReloader) *Server {
-	backend := NewBackend(s, checker)
+func NewServer(cfg *config.Config, s *store.Store, checker *security.Checker, relay *Relay, certReloader *tlsutil.CertReloader) *Server {
+	backend := NewBackend(s, checker, relay, cfg)
 
 	srv := gosmtp.NewServer(backend)
 	srv.Addr = ":" + cfg.SMTPPort

@@ -159,7 +159,8 @@ echo "[OK] Environment file created"
 cat > /etc/systemd/system/bdsmail.service << EOF
 [Unit]
 Description=BDS Mail Server
-After=network.target
+After=network.target cloud-sql-proxy.service
+Requires=cloud-sql-proxy.service
 
 [Service]
 Type=simple
