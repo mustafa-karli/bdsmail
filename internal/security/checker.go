@@ -98,11 +98,11 @@ func (c *Checker) CheckInbound(ctx context.Context, rawEmail []byte, bodyText st
 }
 
 // CheckOutbound runs ClamAV and Safe Browsing checks on an outbound email.
-// SPF/DKIM/DMARC verification is not applicable for outbound.
-func (c *Checker) CheckOutbound(ctx context.Context, bodyText string, contentType string) *CheckResult {
+// attachmentData is optional raw attachment bytes to scan individually.
+func (c *Checker) CheckOutbound(ctx context.Context, bodyText string, contentType string, attachmentData ...[]byte) *CheckResult {
 	result := &CheckResult{}
 
-	// 1. ClamAV virus scan
+	// 1. ClamAV virus scan — body + each attachment
 	if c.clamav != nil {
 		virusFound, virusName, err := c.clamav.Scan(ctx, []byte(bodyText))
 		if err != nil {
@@ -111,6 +111,17 @@ func (c *Checker) CheckOutbound(ctx context.Context, bodyText string, contentTyp
 			result.Reject = true
 			result.Reason = "virus detected: " + virusName
 			return result
+		}
+		// Scan each attachment separately
+		for _, data := range attachmentData {
+			virusFound, virusName, err = c.clamav.Scan(ctx, data)
+			if err != nil {
+				log.Printf("security: ClamAV attachment scan error (fail-open): %v", err)
+			} else if virusFound {
+				result.Reject = true
+				result.Reason = "virus detected in attachment: " + virusName
+				return result
+			}
 		}
 	}
 

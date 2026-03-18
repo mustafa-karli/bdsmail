@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mustafakarli/bdsmail/config"
+	"github.com/mustafakarli/bdsmail/internal/mimeutil"
 	"github.com/mustafakarli/bdsmail/internal/model"
 	"github.com/mustafakarli/bdsmail/internal/store"
 	"github.com/mustafakarli/bdsmail/internal/tlsutil"
@@ -241,13 +242,8 @@ func (sess *pop3Session) handleRetr(arg string) {
 
 	msg := sess.messages[idx]
 	ctx := context.Background()
-	body, err := sess.store.Bucket.ReadBody(ctx, msg.GCSKey)
-	if err != nil {
-		sess.send("-ERR failed to retrieve message")
-		return
-	}
-
-	content := buildRFC822(msg, string(body))
+	attData, _ := sess.store.LoadAttachments(ctx, msg)
+	content := mimeutil.BuildFullMessage(msg, attData)
 
 	sess.send(fmt.Sprintf("+OK %d octets", len(content)))
 	sess.send(content)
@@ -303,21 +299,3 @@ func estimateSize(msg *model.Message) int {
 	return 500
 }
 
-func buildRFC822(msg *model.Message, body string) string {
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("From: %s\r\n", msg.From))
-	sb.WriteString(fmt.Sprintf("To: %s\r\n", strings.Join(msg.To, ", ")))
-	if len(msg.CC) > 0 {
-		sb.WriteString(fmt.Sprintf("Cc: %s\r\n", strings.Join(msg.CC, ", ")))
-	}
-	sb.WriteString(fmt.Sprintf("Subject: %s\r\n", msg.Subject))
-	sb.WriteString(fmt.Sprintf("Date: %s\r\n", msg.ReceivedAt.Format("Mon, 02 Jan 2006 15:04:05 -0700")))
-	if msg.MessageID != "" {
-		sb.WriteString(fmt.Sprintf("Message-ID: %s\r\n", msg.MessageID))
-	}
-	sb.WriteString("MIME-Version: 1.0\r\n")
-	sb.WriteString(fmt.Sprintf("Content-Type: %s; charset=UTF-8\r\n", msg.ContentType))
-	sb.WriteString("\r\n")
-	sb.WriteString(body)
-	return sb.String()
-}

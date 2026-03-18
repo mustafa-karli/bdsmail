@@ -15,11 +15,12 @@ A multi-domain mail server written in Go. Supports SMTP, POP3, IMAP, and a web i
 - **Dynamic domain registration**: Add new domains on the fly via web admin or CLI without server restart
 - **User display names**: Users have display names shown in the UI and outbound email headers
 - **Admin interface**: Web UI at `/admin/domains` for managing domains
-- **Virus scanning**: Optional ClamAV integration blocks infected emails (inbound and outbound)
+- **Attachments**: Send and receive file attachments (MIME multipart), stored in GCS or S3
+- **Virus scanning**: Optional ClamAV integration blocks infected emails and attachments (inbound and outbound)
 - **Dangerous link detection**: Google Safe Browsing API flags or blocks emails with malicious URLs
 - **Sender verification**: Inbound SPF/DKIM/DMARC checks with policy-based reject or quarantine
-- **GCS storage**: Mail bodies stored in a GCP Cloud Storage bucket
-- **PostgreSQL**: User accounts and message metadata
+- **Multiple database backends**: PostgreSQL, SQLite, DynamoDB, or Firestore
+- **Multiple object stores**: GCS or S3 for attachments (configurable)
 
 ## Architecture
 
@@ -27,18 +28,24 @@ A multi-domain mail server written in Go. Supports SMTP, POP3, IMAP, and a web i
 graph TD
     Internet((Internet))
 
-    Internet --> SMTP["SMTP :25<br/>(receive & relay)"]
+    Internet -->|inbound| SMTP["SMTP :25<br/>(receive & relay)"]
     Internet --> POP3["POP3 :110<br/>(mail clients)"]
     Internet --> IMAP["IMAP :143<br/>(mail clients)"]
     Internet --> HTTPS["HTTPS :443<br/>(web UI)"]
 
-    SMTP --> Store["Store<br/>(facade)"]
+    SMTP --> Security["Security Checks<br/>(ClamAV, Safe Browsing,<br/>SPF/DKIM/DMARC)"]
+    HTTPS --> Security
+
+    Security --> Store["Store<br/>(facade)"]
     POP3 --> Store
     IMAP --> Store
-    HTTPS --> Store
 
     Store --> PostgreSQL[(PostgreSQL<br/>metadata)]
     Store --> GCS[(GCS Bucket<br/>mail bodies)]
+
+    SMTP -->|outbound| SES["Amazon SES<br/>(SMTP relay :587)"]
+    HTTPS -->|outbound| SES
+    SES --> Internet
 ```
 
 ## Prerequisites
@@ -552,6 +559,103 @@ All configuration is via environment variables:
 | `BDS_RELAY_PORT` | External relay port | `587` |
 | `BDS_RELAY_USER` | Relay authentication username | (none) |
 | `BDS_RELAY_PASSWORD` | Relay authentication password | (none) |
+| `BDS_DB_TYPE` | Database backend: `postgres`, `sqlite`, or `dynamodb` | `postgres` |
+| `BDS_SQLITE_PATH` | Path to SQLite database file (when `BDS_DB_TYPE=sqlite`) | `/opt/bdsmail/bdsmail.db` |
+| `BDS_DYNAMODB_REGION` | AWS region for DynamoDB (when `BDS_DB_TYPE=dynamodb`) | `us-west-2` |
+| `BDS_FIRESTORE_PROJECT` | GCP project for Firestore (when `BDS_DB_TYPE=firestore`) | (none) |
+| `BDS_BUCKET_TYPE` | Object storage backend: `gcs`, `s3`, or empty (disabled) | (none) |
+| `BDS_S3_REGION` | AWS region for S3 bucket | `us-west-2` |
+| `BDS_S3_BUCKET` | S3 bucket name (when `BDS_BUCKET_TYPE=s3`) | (none) |
+| `BDS_MAX_ATTACHMENT_BYTES` | Maximum attachment size in bytes | `10485760` (10MB) |
+
+---
+
+## Attachments
+
+Attachments are supported for both inbound (SMTP) and outbound (web UI, SMTP relay) email. Mail bodies are stored in the database; attachments are stored in object storage (GCS or S3).
+
+### Configuration
+
+Enable object storage in `.env`:
+
+**Google Cloud Storage:**
+```bash
+BDS_BUCKET_TYPE=gcs
+BDS_GCS_BUCKET=your-bucket-name
+```
+
+**Amazon S3:**
+```bash
+BDS_BUCKET_TYPE=s3
+BDS_S3_REGION=us-west-2
+BDS_S3_BUCKET=your-bucket-name
+```
+
+### Size limits
+
+Maximum attachment size defaults to 10MB. Change with:
+```bash
+BDS_MAX_ATTACHMENT_BYTES=20971520  # 20MB
+```
+
+### Security
+
+- **Inbound**: ClamAV scans the full raw email (including MIME-encoded attachments)
+- **Outbound**: Each uploaded attachment is scanned individually by ClamAV before sending
+- Attachments exceeding the size limit are rejected with an SMTP 552 error
+
+### How it works
+
+- **Inbound SMTP**: MIME multipart messages are parsed; text body goes to DB, attachments go to bucket
+- **Web UI compose**: File upload via `<input type="file" multiple>`; attachments saved to bucket
+- **IMAP/POP3**: Messages are reconstructed as multipart MIME with base64-encoded attachments
+- **Web UI read**: Attachments listed with download links
+- Without object storage configured, attachments in inbound emails are silently dropped
+
+---
+
+## Database Backends
+
+The application supports three database backends. Set `BDS_DB_TYPE` in `.env` to choose.
+
+### PostgreSQL (default)
+
+The default backend. Requires a PostgreSQL instance (Cloud SQL, RDS, or self-hosted).
+
+```bash
+BDS_DB_TYPE=postgres
+DATABASE_URL=postgres://bdsmail:password@localhost:5432/bdsmail?sslmode=disable
+```
+
+### SQLite (simplest, $0)
+
+File-based database stored on the VM's disk. No external service needed. Best for single-server deployments with moderate traffic.
+
+```bash
+BDS_DB_TYPE=sqlite
+BDS_SQLITE_PATH=/opt/bdsmail/bdsmail.db
+```
+
+Tables are created automatically on first startup. The database file is created at the specified path.
+
+### DynamoDB ($0 with AWS free tier)
+
+AWS managed NoSQL database. The free tier (always-free, not time-limited) includes 25GB storage and 25 read/write capacity units — more than enough for a mail server.
+
+```bash
+BDS_DB_TYPE=dynamodb
+BDS_DYNAMODB_REGION=us-west-2
+```
+
+The application automatically creates two DynamoDB tables (`bdsmail-users` and `bdsmail-messages`) with the required indexes. Your VM's IAM role or AWS credentials must have DynamoDB permissions.
+
+### Cost comparison
+
+| Backend | Monthly Cost | Pros | Cons |
+|---------|-------------|------|------|
+| PostgreSQL | $10-15 (managed) | Full SQL, robust | Requires managed DB service |
+| SQLite | $0 | Zero config, no network dependency | Single-server only |
+| DynamoDB | $0 (free tier) | Managed, scalable, always-free tier | AWS only, requires IAM setup |
 
 ---
 

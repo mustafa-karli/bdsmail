@@ -2,11 +2,15 @@ package web
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strings"
 
 	"github.com/mustafakarli/bdsmail/config"
+	"github.com/mustafakarli/bdsmail/internal/mimeutil"
+	"github.com/mustafakarli/bdsmail/internal/model"
 	"github.com/mustafakarli/bdsmail/internal/security"
 	"github.com/mustafakarli/bdsmail/internal/smtp"
 	"github.com/mustafakarli/bdsmail/internal/store"
@@ -174,12 +178,51 @@ func (h *Handlers) HandleCompose(w http.ResponseWriter, r *http.Request, tmpl te
 		return
 	}
 
+	// Parse multipart form (32MB max in-memory)
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		r.ParseForm() // fallback to regular form
+	}
+
 	to := parseAddresses(r.FormValue("to"))
 	cc := parseAddresses(r.FormValue("cc"))
 	bcc := parseAddresses(r.FormValue("bcc"))
 	subject := r.FormValue("subject")
 	contentType := r.FormValue("content_type")
 	body := r.FormValue("body")
+
+	// Parse uploaded attachments
+	var attachments []mimeutil.ParsedAttachment
+	if r.MultipartForm != nil && r.MultipartForm.File != nil {
+		for _, fileHeaders := range r.MultipartForm.File {
+			for _, fh := range fileHeaders {
+				if h.cfg != nil && fh.Size > h.cfg.MaxAttachmentBytes {
+					pd.Error = fmt.Sprintf("Attachment %q exceeds maximum size of %d MB", fh.Filename, h.cfg.MaxAttachmentBytes/(1024*1024))
+					pd.FormTo = r.FormValue("to")
+					pd.FormCC = r.FormValue("cc")
+					pd.FormBCC = r.FormValue("bcc")
+					pd.FormSubject = subject
+					pd.FormBody = body
+					pd.FormContentType = contentType
+					tmpl.render(w, "layout", pd)
+					return
+				}
+				f, err := fh.Open()
+				if err != nil {
+					continue
+				}
+				data, err := io.ReadAll(f)
+				f.Close()
+				if err != nil {
+					continue
+				}
+				attachments = append(attachments, mimeutil.ParsedAttachment{
+					Filename:    fh.Filename,
+					ContentType: fh.Header.Get("Content-Type"),
+					Data:        data,
+				})
+			}
+		}
+	}
 
 	if len(to) == 0 {
 		pd.Error = "At least one recipient is required"
@@ -203,7 +246,11 @@ func (h *Handlers) HandleCompose(w http.ResponseWriter, r *http.Request, tmpl te
 
 	// Run security checks on outbound mail
 	if h.checker != nil {
-		result := h.checker.CheckOutbound(ctx, body, contentType)
+		var attData [][]byte
+		for _, att := range attachments {
+			attData = append(attData, att.Data)
+		}
+		result := h.checker.CheckOutbound(ctx, body, contentType, attData...)
 		if result.Reject {
 			log.Printf("blocked outbound mail from %s: %s", email, result.Reason)
 			pd.Error = "Message blocked: " + result.Reason
@@ -218,7 +265,7 @@ func (h *Handlers) HandleCompose(w http.ResponseWriter, r *http.Request, tmpl te
 		}
 	}
 
-	messageID, err := h.store.SaveOutgoingMail(ctx, email, fromAddr, to, cc, bcc, subject, contentType, body)
+	messageID, err := h.store.SaveOutgoingMail(ctx, email, fromAddr, to, cc, bcc, subject, contentType, body, attachments)
 	if err != nil {
 		log.Printf("error saving outgoing mail: %v", err)
 		pd.Error = "Failed to send message"
@@ -309,6 +356,54 @@ func (h *Handlers) HandleDeleteMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Redirect(w, r, "/inbox", http.StatusSeeOther)
+}
+
+func (h *Handlers) HandleAttachment(w http.ResponseWriter, r *http.Request) {
+	email, ok := h.requireAuth(w, r)
+	if !ok {
+		return
+	}
+
+	// URL: /attachment/{messageID}/{attachmentID}
+	path := strings.TrimPrefix(r.URL.Path, "/attachment/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) != 2 {
+		http.NotFound(w, r)
+		return
+	}
+	msgID, attID := parts[0], parts[1]
+
+	msg, err := h.store.DB.GetMessage(msgID)
+	if err != nil || msg.OwnerUser != email {
+		http.NotFound(w, r)
+		return
+	}
+
+	// Find the attachment
+	var found *model.Attachment
+	for i := range msg.Attachments {
+		if msg.Attachments[i].ID == attID {
+			found = &msg.Attachments[i]
+			break
+		}
+	}
+	if found == nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	ctx := context.Background()
+	data, err := h.store.GetAttachmentData(ctx, found.BucketKey)
+	if err != nil {
+		log.Printf("error reading attachment: %v", err)
+		http.Error(w, "Failed to load attachment", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", found.ContentType)
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", found.Filename))
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
+	w.Write(data)
 }
 
 // helpers

@@ -3,6 +3,7 @@ package smtp
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"mime"
@@ -12,6 +13,7 @@ import (
 
 	gosmtp "github.com/emersion/go-smtp"
 	"github.com/mustafakarli/bdsmail/config"
+	"github.com/mustafakarli/bdsmail/internal/mimeutil"
 	"github.com/mustafakarli/bdsmail/internal/security"
 	"github.com/mustafakarli/bdsmail/internal/store"
 )
@@ -80,14 +82,14 @@ func (s *Session) Rcpt(to string, opts *gosmtp.RcptOptions) error {
 }
 
 func (s *Session) Data(r io.Reader) error {
-	body, err := io.ReadAll(r)
+	rawEmail, err := io.ReadAll(r)
 	if err != nil {
 		return err
 	}
 
-	msg, err := mail.ReadMessage(bytes.NewReader(body))
+	msg, err := mail.ReadMessage(bytes.NewReader(rawEmail))
 	if err != nil {
-		return s.storeRaw(string(body))
+		return s.storeRaw(string(rawEmail))
 	}
 
 	subject := decodeHeader(msg.Header.Get("Subject"))
@@ -103,33 +105,41 @@ func (s *Session) Data(r io.Reader) error {
 	cc := parseHeaderAddrs(msg.Header.Get("Cc"))
 	bcc := s.collectBCC(to, cc)
 
-	contentType := "text/plain"
-	ct := msg.Header.Get("Content-Type")
-	if strings.Contains(ct, "text/html") {
-		contentType = "text/html"
+	// Parse MIME to extract body and attachments
+	parsed, err := mimeutil.Parse(msg)
+	if err != nil {
+		return s.storeRaw(string(rawEmail))
 	}
 
-	bodyBytes, err := io.ReadAll(msg.Body)
-	if err != nil {
-		return err
+	// Enforce max attachment size
+	if s.backend.cfg != nil {
+		maxSize := s.backend.cfg.MaxAttachmentBytes
+		for _, att := range parsed.Attachments {
+			if int64(len(att.Data)) > maxSize {
+				return &gosmtp.SMTPError{
+					Code:    552,
+					Message: fmt.Sprintf("Attachment %q exceeds maximum size of %d bytes", att.Filename, maxSize),
+				}
+			}
+		}
 	}
 
 	ctx := context.Background()
-	bodyText := string(bodyBytes)
 
 	if s.authed {
-		// Authenticated user: treat as outbound mail
-		return s.handleOutbound(ctx, body, from, to, cc, bcc, subject, contentType, bodyText)
+		return s.handleOutbound(ctx, rawEmail, from, to, cc, bcc, subject, parsed)
 	}
-
-	// Unauthenticated: treat as inbound mail
-	return s.handleInbound(ctx, body, from, to, cc, bcc, subject, contentType, bodyText)
+	return s.handleInbound(ctx, rawEmail, from, to, cc, bcc, subject, parsed)
 }
 
-func (s *Session) handleOutbound(ctx context.Context, rawEmail []byte, from string, to, cc, bcc []string, subject, contentType, bodyText string) error {
-	// Run outbound security checks
+func (s *Session) handleOutbound(ctx context.Context, rawEmail []byte, from string, to, cc, bcc []string, subject string, parsed *mimeutil.ParsedEmail) error {
+	// Run outbound security checks (scan body + attachments)
 	if s.backend.checker != nil {
-		result := s.backend.checker.CheckOutbound(ctx, bodyText, contentType)
+		var attData [][]byte
+		for _, att := range parsed.Attachments {
+			attData = append(attData, att.Data)
+		}
+		result := s.backend.checker.CheckOutbound(ctx, parsed.TextBody, parsed.ContentType, attData...)
 		if result.Reject {
 			log.Printf("blocked outbound mail from %s: %s", s.user, result.Reason)
 			return &gosmtp.SMTPError{
@@ -140,7 +150,7 @@ func (s *Session) handleOutbound(ctx context.Context, rawEmail []byte, from stri
 	}
 
 	// Save sender's copy in Sent folder + deliver to local recipients
-	messageID, err := s.backend.store.SaveOutgoingMail(ctx, s.user, from, to, cc, bcc, subject, contentType, bodyText)
+	messageID, err := s.backend.store.SaveOutgoingMail(ctx, s.user, from, to, cc, bcc, subject, parsed.ContentType, parsed.TextBody, parsed.Attachments)
 	if err != nil {
 		log.Printf("failed to save outgoing mail: %v", err)
 		return &gosmtp.SMTPError{
@@ -165,7 +175,7 @@ func (s *Session) handleOutbound(ctx context.Context, rawEmail []byte, from stri
 
 	if len(external) > 0 && s.backend.relay != nil {
 		go func() {
-			err := s.backend.relay.Send(s.user, external, subject, contentType, bodyText, messageID)
+			err := s.backend.relay.Send(s.user, external, subject, parsed.ContentType, parsed.TextBody, messageID)
 			if err != nil {
 				log.Printf("SMTP relay error: %v", err)
 			}
@@ -175,12 +185,12 @@ func (s *Session) handleOutbound(ctx context.Context, rawEmail []byte, from stri
 	return nil
 }
 
-func (s *Session) handleInbound(ctx context.Context, rawEmail []byte, from string, to, cc, bcc []string, subject, contentType, bodyText string) error {
+func (s *Session) handleInbound(ctx context.Context, rawEmail []byte, from string, to, cc, bcc []string, subject string, parsed *mimeutil.ParsedEmail) error {
 	folder := "INBOX"
 
-	// Run inbound security checks
+	// Run inbound security checks (scan body + attachments)
 	if s.backend.checker != nil {
-		result := s.backend.checker.CheckInbound(ctx, rawEmail, bodyText, contentType, s.remoteIP, from, s.ehloHostname)
+		result := s.backend.checker.CheckInbound(ctx, rawEmail, parsed.TextBody, parsed.ContentType, s.remoteIP, from, s.ehloHostname)
 		if result.Reject {
 			log.Printf("rejected mail from %s: %s", from, result.Reason)
 			return &gosmtp.SMTPError{
@@ -196,7 +206,7 @@ func (s *Session) handleInbound(ctx context.Context, rawEmail []byte, from strin
 		}
 	}
 
-	err := s.backend.store.SaveIncomingMail(ctx, from, to, cc, bcc, subject, contentType, bodyText, folder)
+	err := s.backend.store.SaveIncomingMail(ctx, from, to, cc, bcc, subject, parsed.ContentType, parsed.TextBody, folder, parsed.Attachments)
 	if err != nil {
 		log.Printf("failed to save incoming mail: %v", err)
 		return &gosmtp.SMTPError{
@@ -219,7 +229,7 @@ func (s *Session) Logout() error {
 
 func (s *Session) storeRaw(body string) error {
 	ctx := context.Background()
-	return s.backend.store.SaveIncomingMail(ctx, s.from, s.to, nil, nil, "(no subject)", "text/plain", body, "INBOX")
+	return s.backend.store.SaveIncomingMail(ctx, s.from, s.to, nil, nil, "(no subject)", "text/plain", body, "INBOX", nil)
 }
 
 func (s *Session) collectBCC(to, cc []string) []string {

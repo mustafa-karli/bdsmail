@@ -31,6 +31,14 @@ type Config struct {
 	RelayPort      string
 	RelayUser      string
 	RelayPassword  string
+	DBType         string
+	SQLitePath     string
+	DynamoDBRegion     string
+	FirestoreProject   string
+	BucketType         string // "gcs", "s3", or "" (disabled)
+	S3Region           string
+	S3Bucket           string
+	MaxAttachmentBytes int64
 }
 
 // HostToDomain maps a Host header like "mail.domain1.com" to "domain1.com".
@@ -158,7 +166,15 @@ func Load() (*Config, EnvMap) {
 		AdminSecret:  env.Get("BDS_ADMIN_SECRET", ""),
 		AcmeWebroot:  env.Get("BDS_ACME_WEBROOT", "/opt/bdsmail/acme"),
 		EnvFile:       envFile,
-		RelayHost:     env.Get("BDS_RELAY_HOST", ""),
+		DBType:         env.Get("BDS_DB_TYPE", "postgres"),
+		SQLitePath:     env.Get("BDS_SQLITE_PATH", "/opt/bdsmail/bdsmail.db"),
+		DynamoDBRegion:   env.Get("BDS_DYNAMODB_REGION", "us-west-2"),
+		FirestoreProject:   env.Get("BDS_FIRESTORE_PROJECT", ""),
+		BucketType:         env.Get("BDS_BUCKET_TYPE", ""),
+		S3Region:           env.Get("BDS_S3_REGION", "us-west-2"),
+		S3Bucket:           env.Get("BDS_S3_BUCKET", ""),
+		MaxAttachmentBytes: env.GetInt64("BDS_MAX_ATTACHMENT_BYTES", 10*1024*1024),
+		RelayHost:      env.Get("BDS_RELAY_HOST", ""),
 		RelayPort:     env.Get("BDS_RELAY_PORT", "587"),
 		RelayUser:     env.Get("BDS_RELAY_USER", ""),
 		RelayPassword: env.Get("BDS_RELAY_PASSWORD", ""),
@@ -196,6 +212,18 @@ func (e EnvMap) GetDuration(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return time.Duration(secs) * time.Second
+}
+
+func (e EnvMap) GetInt64(key string, fallback int64) int64 {
+	v, ok := e[key]
+	if !ok || v == "" {
+		return fallback
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return n
 }
 
 // loadEnvFile reads a .env file and returns a map of key=value pairs.

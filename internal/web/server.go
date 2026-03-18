@@ -109,6 +109,8 @@ func (s *Server) Start() error {
 		s.handlers.HandleCompose(w, r, s.renderer("compose"))
 	})
 
+	mux.HandleFunc("/attachment/", s.handlers.HandleAttachment)
+
 	mux.HandleFunc("/message/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/delete") && r.Method == http.MethodPost {
 			s.handlers.HandleDeleteMessage(w, r)

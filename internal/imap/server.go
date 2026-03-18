@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mustafakarli/bdsmail/config"
+	"github.com/mustafakarli/bdsmail/internal/mimeutil"
 	"github.com/mustafakarli/bdsmail/internal/model"
 	"github.com/mustafakarli/bdsmail/internal/store"
 	"github.com/mustafakarli/bdsmail/internal/tlsutil"
@@ -282,20 +283,12 @@ func (sess *imapSession) handleFetch(tag, args string) {
 				response.WriteString(fmt.Sprintf("BODY[HEADER] {%d}\r\n%s", len(header), header))
 			case "BODY[]", "BODY.PEEK[]", "RFC822":
 				ctx := context.Background()
-				body, err := sess.store.Bucket.ReadBody(ctx, msg.GCSKey)
-				if err != nil {
-					body = []byte("(failed to load body)")
-				}
-				fullMsg := buildHeader(msg) + "\r\n" + string(body)
+				attData, _ := sess.store.LoadAttachments(ctx, msg)
+				fullMsg := mimeutil.BuildFullMessage(msg, attData)
 				response.WriteString(fmt.Sprintf("BODY[] {%d}\r\n%s", len(fullMsg), fullMsg))
 				sess.store.DB.MarkSeen(msg.ID)
 			case "BODY[TEXT]", "BODY.PEEK[TEXT]", "RFC822.TEXT":
-				ctx := context.Background()
-				body, err := sess.store.Bucket.ReadBody(ctx, msg.GCSKey)
-				if err != nil {
-					body = []byte("(failed to load body)")
-				}
-				response.WriteString(fmt.Sprintf("BODY[TEXT] {%d}\r\n%s", len(body), string(body)))
+				response.WriteString(fmt.Sprintf("BODY[TEXT] {%d}\r\n%s", len(msg.Body), msg.Body))
 			case "INTERNALDATE":
 				response.WriteString(fmt.Sprintf(`INTERNALDATE "%s"`, msg.ReceivedAt.Format("02-Jan-2006 15:04:05 -0700")))
 			case "RFC822.SIZE":
@@ -423,20 +416,7 @@ func findFirstUnseen(msgs []*model.Message) int {
 }
 
 func buildHeader(msg *model.Message) string {
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("From: %s\r\n", msg.From))
-	sb.WriteString(fmt.Sprintf("To: %s\r\n", strings.Join(msg.To, ", ")))
-	if len(msg.CC) > 0 {
-		sb.WriteString(fmt.Sprintf("Cc: %s\r\n", strings.Join(msg.CC, ", ")))
-	}
-	sb.WriteString(fmt.Sprintf("Subject: %s\r\n", msg.Subject))
-	sb.WriteString(fmt.Sprintf("Date: %s\r\n", msg.ReceivedAt.Format("Mon, 02 Jan 2006 15:04:05 -0700")))
-	if msg.MessageID != "" {
-		sb.WriteString(fmt.Sprintf("Message-ID: %s\r\n", msg.MessageID))
-	}
-	sb.WriteString("MIME-Version: 1.0\r\n")
-	sb.WriteString(fmt.Sprintf("Content-Type: %s; charset=UTF-8\r\n", msg.ContentType))
-	return sb.String()
+	return mimeutil.BuildHeaders(msg)
 }
 
 func estimateRFC822Size(msg *model.Message) int {

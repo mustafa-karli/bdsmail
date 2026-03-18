@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/emersion/go-msgauth/dkim"
+	"github.com/mustafakarli/bdsmail/internal/mimeutil"
 )
 
 type Relay struct {
@@ -158,17 +159,5 @@ func (r *Relay) signDKIM(from, msg string) []byte {
 }
 
 func buildMessage(from string, to []string, subject, contentType, body, messageID string) string {
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("From: %s\r\n", from))
-	sb.WriteString(fmt.Sprintf("To: %s\r\n", strings.Join(to, ", ")))
-	sb.WriteString(fmt.Sprintf("Subject: %s\r\n", subject))
-	if messageID != "" {
-		sb.WriteString(fmt.Sprintf("Message-ID: %s\r\n", messageID))
-	}
-	sb.WriteString(fmt.Sprintf("Date: %s\r\n", time.Now().UTC().Format("Mon, 02 Jan 2006 15:04:05 -0700")))
-	sb.WriteString("MIME-Version: 1.0\r\n")
-	sb.WriteString(fmt.Sprintf("Content-Type: %s; charset=UTF-8\r\n", contentType))
-	sb.WriteString("\r\n")
-	sb.WriteString(body)
-	return sb.String()
+	return mimeutil.BuildRFC822(from, to, nil, subject, contentType, body, messageID, nil)
 }

@@ -45,12 +45,24 @@ func main() {
 		return
 	}
 
-	// Initialize PostgreSQL
-	db, err := store.NewDB(cfg.DatabaseURL)
-	if err != nil {
-		log.Fatalf("Failed to initialize database: %v", err)
+	// Initialize database
+	var db store.Database
+	var dbErr error
+	switch cfg.DBType {
+	case "sqlite":
+		db, dbErr = store.NewDbSqlite(cfg.SQLitePath)
+	case "dynamodb":
+		db, dbErr = store.NewDbDynamo(cfg.DynamoDBRegion)
+	case "firestore":
+		db, dbErr = store.NewDbFirestore(cfg.FirestoreProject)
+	default:
+		db, dbErr = store.NewDbPgsql(cfg.DatabaseURL)
+	}
+	if dbErr != nil {
+		log.Fatalf("Failed to initialize database: %v", dbErr)
 	}
 	defer db.Close()
+	log.Printf("Database backend: %s", cfg.DBType)
 
 	// Handle adduser command
 	if *addUser != "" {
@@ -78,12 +90,28 @@ func main() {
 		return
 	}
 
-	// Initialize GCS bucket
-	bucket, err := store.NewBucket(ctx, cfg.GCSBucket)
-	if err != nil {
-		log.Fatalf("Failed to initialize GCS bucket: %v", err)
+	// Initialize object storage (for attachments)
+	var bucket store.ObjectStore
+	switch cfg.BucketType {
+	case "gcs":
+		var bucketErr error
+		bucket, bucketErr = store.NewGCSBucket(ctx, cfg.GCSBucket)
+		if bucketErr != nil {
+			log.Printf("warning: GCS bucket init failed, attachments disabled: %v", bucketErr)
+		} else {
+			defer bucket.Close()
+			log.Printf("Object storage: GCS bucket %s", cfg.GCSBucket)
+		}
+	case "s3":
+		var bucketErr error
+		bucket, bucketErr = store.NewS3Bucket(ctx, cfg.S3Region, cfg.S3Bucket)
+		if bucketErr != nil {
+			log.Printf("warning: S3 bucket init failed, attachments disabled: %v", bucketErr)
+		} else {
+			defer bucket.Close()
+			log.Printf("Object storage: S3 bucket %s", cfg.S3Bucket)
+		}
 	}
-	defer bucket.Close()
 
 	// Create store facade
 	s := store.NewStore(db, bucket)
@@ -95,9 +123,10 @@ func main() {
 	secCfg := security.LoadConfig(env)
 	var checker *security.Checker
 	if secCfg.AnyEnabled() {
-		checker, err = security.NewChecker(secCfg)
-		if err != nil {
-			log.Printf("warning: security checker init failed, running without checks: %v", err)
+		var secErr error
+		checker, secErr = security.NewChecker(secCfg)
+		if secErr != nil {
+			log.Printf("warning: security checker init failed, running without checks: %v", secErr)
 			checker = nil
 		}
 	}
@@ -111,9 +140,10 @@ func main() {
 	// Initialize TLS cert reloader (if TLS is configured)
 	var certReloader *tlsutil.CertReloader
 	if cfg.TLSCert != "" && cfg.TLSKey != "" {
-		certReloader, err = tlsutil.NewCertReloader(cfg.TLSCert, cfg.TLSKey)
-		if err != nil {
-			log.Printf("warning: TLS cert reloader failed, running without TLS: %v", err)
+		var tlsErr error
+		certReloader, tlsErr = tlsutil.NewCertReloader(cfg.TLSCert, cfg.TLSKey)
+		if tlsErr != nil {
+			log.Printf("warning: TLS cert reloader failed, running without TLS: %v", tlsErr)
 			certReloader = nil
 		}
 	}
