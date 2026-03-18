@@ -6,6 +6,7 @@ import (
 
 	gosmtp "github.com/emersion/go-smtp"
 	"github.com/mustafakarli/bdsmail/config"
+	"github.com/mustafakarli/bdsmail/internal/security"
 	"github.com/mustafakarli/bdsmail/internal/store"
 	"github.com/mustafakarli/bdsmail/internal/tlsutil"
 )
@@ -14,8 +15,8 @@ type Server struct {
 	srv *gosmtp.Server
 }
 
-func NewServer(cfg *config.Config, s *store.Store, certReloader *tlsutil.CertReloader) *Server {
-	backend := NewBackend(s)
+func NewServer(cfg *config.Config, s *store.Store, checker *security.Checker, certReloader *tlsutil.CertReloader) *Server {
+	backend := NewBackend(s, checker)
 
 	srv := gosmtp.NewServer(backend)
 	srv.Addr = ":" + cfg.SMTPPort

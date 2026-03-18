@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/mustafakarli/bdsmail/config"
+	"github.com/mustafakarli/bdsmail/internal/security"
 	"github.com/mustafakarli/bdsmail/internal/smtp"
 	"github.com/mustafakarli/bdsmail/internal/store"
 	"github.com/mustafakarli/bdsmail/internal/tlsutil"
@@ -34,14 +35,14 @@ func (t *tmplRenderer) render(w http.ResponseWriter, name string, data pageData)
 	}
 }
 
-func NewServer(cfg *config.Config, s *store.Store, relay *smtp.Relay, certReloader *tlsutil.CertReloader) (*Server, error) {
+func NewServer(cfg *config.Config, s *store.Store, relay *smtp.Relay, checker *security.Checker, certReloader *tlsutil.CertReloader) (*Server, error) {
 	tmpl, err := loadTemplates("web/templates")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load templates: %w", err)
 	}
 
 	sessions := NewSessionStore()
-	handlers := NewHandlers(s, relay, sessions, cfg)
+	handlers := NewHandlers(s, relay, sessions, cfg, checker)
 	adminHandlers := NewAdminHandlers(cfg, relay, certReloader)
 
 	return &Server{

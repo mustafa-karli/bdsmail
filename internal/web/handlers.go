@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/mustafakarli/bdsmail/config"
+	"github.com/mustafakarli/bdsmail/internal/security"
 	"github.com/mustafakarli/bdsmail/internal/smtp"
 	"github.com/mustafakarli/bdsmail/internal/store"
 )
@@ -16,10 +17,11 @@ type Handlers struct {
 	relay    *smtp.Relay
 	sessions *SessionStore
 	cfg      *config.Config
+	checker  *security.Checker
 }
 
-func NewHandlers(s *store.Store, relay *smtp.Relay, sessions *SessionStore, cfg *config.Config) *Handlers {
-	return &Handlers{store: s, relay: relay, sessions: sessions, cfg: cfg}
+func NewHandlers(s *store.Store, relay *smtp.Relay, sessions *SessionStore, cfg *config.Config, checker *security.Checker) *Handlers {
+	return &Handlers{store: s, relay: relay, sessions: sessions, cfg: cfg, checker: checker}
 }
 
 type pageData struct {
@@ -198,6 +200,23 @@ func (h *Handlers) HandleCompose(w http.ResponseWriter, r *http.Request, tmpl te
 	}
 
 	ctx := context.Background()
+
+	// Run security checks on outbound mail
+	if h.checker != nil {
+		result := h.checker.CheckOutbound(ctx, body, contentType)
+		if result.Reject {
+			log.Printf("blocked outbound mail from %s: %s", email, result.Reason)
+			pd.Error = "Message blocked: " + result.Reason
+			pd.FormTo = r.FormValue("to")
+			pd.FormCC = r.FormValue("cc")
+			pd.FormBCC = r.FormValue("bcc")
+			pd.FormSubject = subject
+			pd.FormBody = body
+			pd.FormContentType = contentType
+			tmpl.render(w, "layout", pd)
+			return
+		}
+	}
 
 	messageID, err := h.store.SaveOutgoingMail(ctx, email, fromAddr, to, cc, bcc, subject, contentType, body)
 	if err != nil {

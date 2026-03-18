@@ -3,7 +3,9 @@ module github.com/mustafakarli/bdsmail
 go 1.25.3
 
 require (
+	blitiri.com.ar/go/spf v1.5.1
 	cloud.google.com/go/storage v1.61.3
+	github.com/dutchcoders/go-clamd v0.0.0-20170520113014-b970184f4d9e
 	github.com/emersion/go-msgauth v0.7.0
 	github.com/emersion/go-smtp v0.24.0
 	github.com/google/uuid v1.6.0

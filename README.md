@@ -15,6 +15,9 @@ A multi-domain mail server written in Go. Supports SMTP, POP3, IMAP, and a web i
 - **Dynamic domain registration**: Add new domains on the fly via web admin or CLI without server restart
 - **User display names**: Users have display names shown in the UI and outbound email headers
 - **Admin interface**: Web UI at `/admin/domains` for managing domains
+- **Virus scanning**: Optional ClamAV integration blocks infected emails (inbound and outbound)
+- **Dangerous link detection**: Google Safe Browsing API flags or blocks emails with malicious URLs
+- **Sender verification**: Inbound SPF/DKIM/DMARC checks with policy-based reject or quarantine
 - **GCS storage**: Mail bodies stored in a GCP Cloud Storage bucket
 - **PostgreSQL**: User accounts and message metadata
 
@@ -56,7 +59,7 @@ graph TD
 
 ```bash
 export GCP_PROJECT_ID=your-project-id
-export BDS_GCS_BUCKET=bdsmail-bodies
+export BDS_GCS_BUCKET="${GCP_PROJECT_ID}-mail"
 export BDS_REGION=us-west1
 export BDS_ZONE=us-west1-b
 export BDS_VM_NAME=your-vm-name
@@ -68,51 +71,47 @@ gcloud storage buckets create "gs://${BDS_GCS_BUCKET}" \
     --uniform-bucket-level-access
 ```
 
-### 1.2 Create a Service Account
+### 1.2 Authorize the VM Service Account
 
 ```bash
-# Create the service account
-gcloud iam service-accounts create bdsmail \
-    --display-name="BDS Mail Service Account" \
-    --project="${GCP_PROJECT_ID}"
+# Grant the VM's existing service account access to the bucket
+export VM_SERVICE_ACCOUNT=$(gcloud compute instances describe ${BDS_VM_NAME} \
+    --zone="${BDS_ZONE}" \
+    --format="get(serviceAccounts[0].email)")
 
-# Grant bucket access
 gcloud storage buckets add-iam-policy-binding "gs://${BDS_GCS_BUCKET}" \
-    --member="serviceAccount:bdsmail@${GCP_PROJECT_ID}.iam.gserviceaccount.com" \
+    --member="serviceAccount:${VM_SERVICE_ACCOUNT}" \
     --role=roles/storage.objectAdmin
-
-# Create a key file (you'll upload this to the VM)
-gcloud iam service-accounts keys create sa-key.json \
-    --iam-account="bdsmail@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
 ```
 
-> **Tip**: If your VM uses a default service account with Cloud Storage access, you can skip the key file and rely on Application Default Credentials.
+> **Note**: No dedicated service account or key file needed — the VM's existing service account gets bucket access, and the app uses Application Default Credentials (ADC) automatically.
 
 ### 1.3 Prepare the PostgreSQL Database
 
-Connect to your existing PostgreSQL instance and create the database:
+Connect to your existing PostgreSQL instance and create a user and database:
 
 ```sql
-CREATE DATABASE bdsmail;
+CREATE USER bdsmail WITH PASSWORD 'your-secure-password';
+CREATE DATABASE bdsmail OWNER bdsmail;
 ```
 
 The application creates all required tables automatically on first startup.
 
+Look up the private IP of your Cloud SQL instance:
+
+```bash
+gcloud sql instances describe YOUR_INSTANCE_NAME \
+    --format="get(ipAddresses[0].ipAddress)"
+```
+
 Note your connection details for later:
-- **Host**: Private IP of your Cloud SQL instance (e.g. `10.x.x.x`)
+- **Host**: Private IP from the command above (e.g. `10.x.x.x`) — this IP is permanent
 - **Port**: `5432`
-- **User/Password**: Your database credentials
+- **User**: `bdsmail`
+- **Password**: the password you set above
 - **Database**: `bdsmail`
 
 ### 1.4 Configure the GCP VM
-
-#### Reserve a static IP
-
-```bash
-gcloud compute addresses create bdsmail-ip --region="${BDS_REGION}"
-```
-
-Note the IP address — you'll need it for DNS records.
 
 #### Open firewall ports
 
@@ -156,11 +155,17 @@ For **each domain** (e.g. `domain1.com`, `domain2.com`), add the following DNS r
 
 ### 2.4 DKIM Record — Proves emails are authentically from your domain
 
-The deploy script generates DKIM keys and prints the exact DNS record to add. It will look like:
+**Skip this for now** — the DKIM keys are generated during deployment (Step 3.3). After the deploy script runs, it will print the exact DNS TXT record value. Come back here and add it:
 
 | Type | Name | Value | TTL |
 |------|------|-------|-----|
-| TXT  | default._domainkey | `v=DKIM1; k=rsa; p=BASE64_PUBLIC_KEY...` | 1 Hour |
+| TXT  | default._domainkey | `v=DKIM1; k=rsa; p=<value from deploy output>` | 1 Hour |
+
+To regenerate or generate manually at any time:
+
+```bash
+bash /opt/bdsmail/scripts/generate_dkim.sh domain1.com /opt/bdsmail/dkim
+```
 
 > **Note**: The DKIM value is a long string. GoDaddy may require you to paste it in a single line. If it's over 255 characters, GoDaddy usually handles the splitting automatically.
 
@@ -212,16 +217,15 @@ dig TXT _dmarc.domain1.com
 On your development machine:
 
 ```bash
-GOOS=linux GOARCH=amd64 go build -o bdsmail ./cmd/bdsmail/
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/bdsmail ./cmd/bdsmail/
 ```
 
 ### 3.2 Upload to the VM
 
 ```bash
-gcloud compute scp bdsmail ${BDS_VM_NAME}:/tmp/bdsmail --zone="${BDS_ZONE}"
+gcloud compute scp bin/bdsmail ${BDS_VM_NAME}:/tmp/bdsmail --zone="${BDS_ZONE}"
 gcloud compute scp --recurse web ${BDS_VM_NAME}:/tmp/web --zone="${BDS_ZONE}"
 gcloud compute scp --recurse scripts ${BDS_VM_NAME}:/tmp/scripts --zone="${BDS_ZONE}"
-gcloud compute scp sa-key.json ${BDS_VM_NAME}:/tmp/sa-key.json --zone="${BDS_ZONE}"
 ```
 
 ### 3.3 Run the deploy script
@@ -238,12 +242,7 @@ cd /tmp
 # Set required environment variables
 export BDS_DOMAINS="domain1.com,domain2.com"
 export DATABASE_URL="postgres://user:password@10.x.x.x:5432/bdsmail?sslmode=require"
-export BDS_GCS_BUCKET="bdsmail-bodies"
-export GOOGLE_APPLICATION_CREDENTIALS="/opt/bdsmail/sa-key.json"
-
-# Copy the service account key
-cp /tmp/sa-key.json /opt/bdsmail/sa-key.json
-
+export BDS_GCS_BUCKET="${GCP_PROJECT_ID}-mail"
 # Run the deploy script — this does everything automatically:
 #   - Copies binary and web assets
 #   - Installs certbot and obtains TLS certificates
@@ -367,7 +366,7 @@ All configuration is via environment variables:
 | `BDS_HTTPS_PORT` | HTTPS web UI port | `8443` |
 | `BDS_TLS_CERT` | Path to TLS certificate (auto-managed by certbot) | (none) |
 | `BDS_TLS_KEY` | Path to TLS private key (auto-managed by certbot) | (none) |
-| `BDS_GCS_BUCKET` | GCS bucket name for mail bodies | `bdsmail-bodies` |
+| `BDS_GCS_BUCKET` | GCS bucket name for mail bodies | `${GCP_PROJECT_ID}-mail` |
 | `DATABASE_URL` | PostgreSQL connection string | `postgres://localhost:5432/bdsmail?sslmode=disable` |
 | `BDS_DKIM_KEY_DIR` | Directory containing DKIM private keys (`{domain}.pem`) | (none) |
 | `BDS_DKIM_SELECTOR` | DKIM selector name | `default` |
@@ -376,6 +375,71 @@ All configuration is via environment variables:
 | `BDS_ACME_WEBROOT` | Directory for ACME challenge files | `/opt/bdsmail/acme` |
 | `BDS_ENV_FILE` | Path to .env file (for persisting domain additions) | (none) |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Path to GCP service account JSON key | (uses ADC) |
+| `BDS_CLAMAV_ENABLED` | Enable ClamAV virus scanning | `false` |
+| `BDS_CLAMAV_ADDRESS` | clamd socket address | `unix:/var/run/clamav/clamd.ctl` |
+| `BDS_CLAMAV_TIMEOUT` | ClamAV scan timeout (seconds) | `5` |
+| `BDS_SAFEBROWSING_ENABLED` | Enable Google Safe Browsing link checks | `false` |
+| `BDS_SAFEBROWSING_API_KEY` | Google Safe Browsing API key | (none) |
+| `BDS_SAFEBROWSING_TIMEOUT` | Safe Browsing API timeout (seconds) | `5` |
+| `BDS_AUTH_CHECK_ENABLED` | Enable inbound SPF/DKIM/DMARC verification | `false` |
+| `BDS_AUTH_CHECK_TIMEOUT` | Auth verification timeout (seconds) | `5` |
+
+---
+
+## Security Checks
+
+Optional security checks can be enabled for both inbound and outbound mail. All checks are disabled by default and fail-open (if a check service is unavailable, mail is still accepted).
+
+### ClamAV Virus Scanning
+
+Scans email bodies for viruses and malware using a local ClamAV daemon.
+
+- **Inbound**: Infected emails are rejected (SMTP 550)
+- **Outbound**: Infected emails are blocked with an error shown to the user
+
+**Setup**:
+```bash
+# Install ClamAV on the VM
+apt-get install -y clamav clamav-daemon
+freshclam
+systemctl enable clamav-daemon clamav-freshclam
+systemctl start clamav-daemon clamav-freshclam
+
+# Enable in .env
+BDS_CLAMAV_ENABLED=true
+BDS_CLAMAV_ADDRESS=unix:/var/run/clamav/clamd.ctl
+```
+
+### Google Safe Browsing (Dangerous Link Detection)
+
+Checks URLs in email bodies against Google's phishing/malware database.
+
+- **Inbound**: Subject is prefixed with `[WARNING: Suspicious Links]`
+- **Outbound**: Emails with dangerous links are blocked
+
+**Setup**:
+1. Enable the [Safe Browsing API](https://console.cloud.google.com/apis/library/safebrowsing.googleapis.com) in your GCP project
+2. Create an API key in the [Credentials page](https://console.cloud.google.com/apis/credentials)
+3. Add to `.env`:
+```bash
+BDS_SAFEBROWSING_ENABLED=true
+BDS_SAFEBROWSING_API_KEY=your-api-key
+```
+
+### SPF/DKIM/DMARC Verification (Inbound Only)
+
+Verifies sender authenticity on inbound mail by checking SPF, DKIM signatures, and DMARC policy.
+
+- **DMARC `p=reject`**: Email is rejected (SMTP 550)
+- **DMARC `p=quarantine`**: Email is delivered to the "Junk" folder
+- **DMARC `p=none` or no record**: Email is delivered normally
+
+**Setup**:
+```bash
+BDS_AUTH_CHECK_ENABLED=true
+```
+
+No additional services needed — verification uses DNS lookups and email header parsing.
 
 ---
 

@@ -103,6 +103,23 @@ for domain in "${DOMAIN_ARRAY[@]}"; do
     "${APP_DIR}/generate_dkim.sh" "${domain}" "${DKIM_DIR}"
 done
 
+# ---- Install ClamAV (optional) ----
+if [ "${BDS_CLAMAV_ENABLED}" = "true" ]; then
+    if ! command -v clamd &>/dev/null; then
+        echo "[..] Installing ClamAV..."
+        apt-get update -qq && apt-get install -y -qq clamav clamav-daemon > /dev/null
+        echo "[OK] ClamAV installed"
+    else
+        echo "[OK] ClamAV already installed"
+    fi
+    systemctl stop clamav-freshclam 2>/dev/null || true
+    freshclam --quiet
+    systemctl enable clamav-daemon clamav-freshclam
+    systemctl start clamav-freshclam
+    systemctl start clamav-daemon
+    echo "[OK] ClamAV daemon started with updated virus definitions"
+fi
+
 # ---- Create environment file ----
 cat > "${APP_DIR}/.env" << EOF
 BDS_DOMAINS=${DOMAINS}
@@ -116,10 +133,24 @@ BDS_GCS_BUCKET=${BDS_GCS_BUCKET:-bdsmail-bodies}
 BDS_DKIM_KEY_DIR=${DKIM_DIR}
 BDS_DKIM_SELECTOR=default
 DATABASE_URL=${DATABASE_URL}
+# Security checks (uncomment to enable)
+# BDS_CLAMAV_ENABLED=true
+# BDS_CLAMAV_ADDRESS=unix:/var/run/clamav/clamd.ctl
+# BDS_SAFEBROWSING_ENABLED=true
+# BDS_SAFEBROWSING_API_KEY=your-api-key
+# BDS_AUTH_CHECK_ENABLED=true
 EOF
 
-if [ -n "${GOOGLE_APPLICATION_CREDENTIALS}" ]; then
-    echo "GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS}" >> "${APP_DIR}/.env"
+if [ "${BDS_CLAMAV_ENABLED}" = "true" ]; then
+    echo "BDS_CLAMAV_ENABLED=true" >> "${APP_DIR}/.env"
+    echo "BDS_CLAMAV_ADDRESS=unix:/var/run/clamav/clamd.ctl" >> "${APP_DIR}/.env"
+fi
+if [ -n "${BDS_SAFEBROWSING_API_KEY}" ]; then
+    echo "BDS_SAFEBROWSING_ENABLED=true" >> "${APP_DIR}/.env"
+    echo "BDS_SAFEBROWSING_API_KEY=${BDS_SAFEBROWSING_API_KEY}" >> "${APP_DIR}/.env"
+fi
+if [ "${BDS_AUTH_CHECK_ENABLED}" = "true" ]; then
+    echo "BDS_AUTH_CHECK_ENABLED=true" >> "${APP_DIR}/.env"
 fi
 
 echo "[OK] Environment file created"

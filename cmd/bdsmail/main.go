@@ -22,6 +22,7 @@ import (
 	"github.com/mustafakarli/bdsmail/internal/imap"
 	"github.com/mustafakarli/bdsmail/internal/model"
 	"github.com/mustafakarli/bdsmail/internal/pop3"
+	"github.com/mustafakarli/bdsmail/internal/security"
 	smtpserver "github.com/mustafakarli/bdsmail/internal/smtp"
 	"github.com/mustafakarli/bdsmail/internal/store"
 	"github.com/mustafakarli/bdsmail/internal/tlsutil"
@@ -90,6 +91,17 @@ func main() {
 	// Load DKIM keys
 	dkimKeys := loadDKIMKeys(cfg.DKIMKeyDir)
 
+	// Initialize security checker
+	secCfg := security.LoadConfig()
+	var checker *security.Checker
+	if secCfg.AnyEnabled() {
+		checker, err = security.NewChecker(secCfg)
+		if err != nil {
+			log.Printf("warning: security checker init failed, running without checks: %v", err)
+			checker = nil
+		}
+	}
+
 	// Create SMTP relay for outbound delivery
 	relay := smtpserver.NewRelay(dkimKeys, cfg.DKIMSelector)
 
@@ -107,7 +119,7 @@ func main() {
 	go startACMEServer(cfg)
 
 	// Start SMTP server
-	smtpSrv := smtpserver.NewServer(cfg, s, certReloader)
+	smtpSrv := smtpserver.NewServer(cfg, s, checker, certReloader)
 	go func() {
 		if err := smtpSrv.Start(); err != nil {
 			log.Printf("SMTP server error: %v", err)
@@ -131,7 +143,7 @@ func main() {
 	}()
 
 	// Start web server
-	webSrv, err := web.NewServer(cfg, s, relay, certReloader)
+	webSrv, err := web.NewServer(cfg, s, relay, checker, certReloader)
 	if err != nil {
 		log.Fatalf("Failed to initialize web server: %v", err)
 	}

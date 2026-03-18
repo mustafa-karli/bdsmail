@@ -19,8 +19,11 @@ func NewStore(db *DB, bucket *Bucket) *Store {
 }
 
 // SaveIncomingMail stores a received message for all local recipients.
-// senderDomain is used for Message-ID generation.
-func (s *Store) SaveIncomingMail(ctx context.Context, from string, to, cc, bcc []string, subject, contentType, body string) error {
+// folder overrides the destination folder (defaults to "INBOX" if empty).
+func (s *Store) SaveIncomingMail(ctx context.Context, from string, to, cc, bcc []string, subject, contentType, body, folder string) error {
+	if folder == "" {
+		folder = "INBOX"
+	}
 	allRecipients := s.collectLocalRecipients(to, cc, bcc)
 
 	_, senderDomain := SplitEmail(from)
@@ -44,7 +47,7 @@ func (s *Store) SaveIncomingMail(ctx context.Context, from string, to, cc, bcc [
 			ContentType: contentType,
 			GCSKey:      gcsKey,
 			OwnerUser:   email, // full email as owner
-			Folder:      "INBOX",
+			Folder:      folder,
 			Seen:        false,
 			ReceivedAt:  time.Now().UTC(),
 		}

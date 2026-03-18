@@ -6,31 +6,44 @@ import (
 	"io"
 	"log"
 	"mime"
+	"net"
 	"net/mail"
 	"strings"
 
 	gosmtp "github.com/emersion/go-smtp"
+	"github.com/mustafakarli/bdsmail/internal/security"
 	"github.com/mustafakarli/bdsmail/internal/store"
 )
 
 type Backend struct {
-	store *store.Store
+	store   *store.Store
+	checker *security.Checker
 }
 
-func NewBackend(s *store.Store) *Backend {
-	return &Backend{store: s}
+func NewBackend(s *store.Store, checker *security.Checker) *Backend {
+	return &Backend{store: s, checker: checker}
 }
 
 func (b *Backend) NewSession(c *gosmtp.Conn) (gosmtp.Session, error) {
-	return &Session{backend: b}, nil
+	var remoteIP net.IP
+	if addr, ok := c.Conn().RemoteAddr().(*net.TCPAddr); ok {
+		remoteIP = addr.IP
+	}
+	return &Session{
+		backend:      b,
+		remoteIP:     remoteIP,
+		ehloHostname: c.Hostname(),
+	}, nil
 }
 
 type Session struct {
-	backend *Backend
-	from    string
-	to      []string
-	authed  bool
-	user    string
+	backend      *Backend
+	from         string
+	to           []string
+	authed       bool
+	user         string
+	remoteIP     net.IP
+	ehloHostname string
 }
 
 // AuthPlain authenticates with full email (user@domain) as username.
@@ -99,7 +112,27 @@ func (s *Session) Data(r io.Reader) error {
 	}
 
 	ctx := context.Background()
-	err = s.backend.store.SaveIncomingMail(ctx, from, to, cc, bcc, subject, contentType, string(bodyBytes))
+	folder := "INBOX"
+
+	// Run security checks before saving
+	if s.backend.checker != nil {
+		result := s.backend.checker.CheckInbound(ctx, body, string(bodyBytes), contentType, s.remoteIP, from, s.ehloHostname)
+		if result.Reject {
+			log.Printf("rejected mail from %s: %s", from, result.Reason)
+			return &gosmtp.SMTPError{
+				Code:    550,
+				Message: "Message rejected: " + result.Reason,
+			}
+		}
+		if result.SubjectPrefix != "" {
+			subject = result.SubjectPrefix + " " + subject
+		}
+		if result.Folder != "" {
+			folder = result.Folder
+		}
+	}
+
+	err = s.backend.store.SaveIncomingMail(ctx, from, to, cc, bcc, subject, contentType, string(bodyBytes), folder)
 	if err != nil {
 		log.Printf("failed to save incoming mail: %v", err)
 		return &gosmtp.SMTPError{
@@ -122,7 +155,7 @@ func (s *Session) Logout() error {
 
 func (s *Session) storeRaw(body string) error {
 	ctx := context.Background()
-	return s.backend.store.SaveIncomingMail(ctx, s.from, s.to, nil, nil, "(no subject)", "text/plain", body)
+	return s.backend.store.SaveIncomingMail(ctx, s.from, s.to, nil, nil, "(no subject)", "text/plain", body, "INBOX")
 }
 
 func (s *Session) collectBCC(to, cc []string) []string {
