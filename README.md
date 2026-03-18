@@ -57,10 +57,14 @@ graph TD
 ```bash
 export GCP_PROJECT_ID=your-project-id
 export BDS_GCS_BUCKET=bdsmail-bodies
+export BDS_REGION=us-west1
+export BDS_ZONE=us-west1-b
+export BDS_VM_NAME=your-vm-name
+export BDS_STATIC_IP=your-vm-static-ip
 
 gcloud storage buckets create "gs://${BDS_GCS_BUCKET}" \
     --project="${GCP_PROJECT_ID}" \
-    --location=us-central1 \
+    --location="${BDS_REGION}" \
     --uniform-bucket-level-access
 ```
 
@@ -105,7 +109,7 @@ Note your connection details for later:
 #### Reserve a static IP
 
 ```bash
-gcloud compute addresses create bdsmail-ip --region=YOUR_REGION
+gcloud compute addresses create bdsmail-ip --region="${BDS_REGION}"
 ```
 
 Note the IP address — you'll need it for DNS records.
@@ -119,9 +123,9 @@ gcloud compute firewall-rules create allow-mail \
     --description="Allow SMTP, HTTP (cert challenges), POP3, IMAP, HTTPS"
 
 # Tag your VM
-gcloud compute instances add-tags YOUR_VM_NAME \
+gcloud compute instances add-tags ${BDS_VM_NAME} \
     --tags=mail-server \
-    --zone=YOUR_ZONE
+    --zone="${BDS_ZONE}"
 ```
 
 > **Port 80** is required for Let's Encrypt certificate issuance (HTTP-01 challenge). It's only used briefly during cert renewal.
@@ -136,7 +140,7 @@ For **each domain** (e.g. `domain1.com`, `domain2.com`), add the following DNS r
 
 | Type | Name | Value | TTL |
 |------|------|-------|-----|
-| A    | mail | `YOUR_VM_STATIC_IP` | 1 Hour |
+| A    | mail | `${BDS_STATIC_IP}` | 1 Hour |
 
 ### 2.2 MX Record — Tells other servers where to deliver email
 
@@ -148,7 +152,7 @@ For **each domain** (e.g. `domain1.com`, `domain2.com`), add the following DNS r
 
 | Type | Name | Value | TTL |
 |------|------|-------|-----|
-| TXT  | @    | `v=spf1 ip4:YOUR_VM_STATIC_IP ~all` | 1 Hour |
+| TXT  | @    | `v=spf1 ip4:${BDS_STATIC_IP} ~all` | 1 Hour |
 
 ### 2.4 DKIM Record — Proves emails are authentically from your domain
 
@@ -214,10 +218,10 @@ GOOS=linux GOARCH=amd64 go build -o bdsmail ./cmd/bdsmail/
 ### 3.2 Upload to the VM
 
 ```bash
-gcloud compute scp bdsmail YOUR_VM_NAME:/tmp/bdsmail --zone=YOUR_ZONE
-gcloud compute scp --recurse web YOUR_VM_NAME:/tmp/web --zone=YOUR_ZONE
-gcloud compute scp --recurse scripts YOUR_VM_NAME:/tmp/scripts --zone=YOUR_ZONE
-gcloud compute scp sa-key.json YOUR_VM_NAME:/tmp/sa-key.json --zone=YOUR_ZONE
+gcloud compute scp bdsmail ${BDS_VM_NAME}:/tmp/bdsmail --zone="${BDS_ZONE}"
+gcloud compute scp --recurse web ${BDS_VM_NAME}:/tmp/web --zone="${BDS_ZONE}"
+gcloud compute scp --recurse scripts ${BDS_VM_NAME}:/tmp/scripts --zone="${BDS_ZONE}"
+gcloud compute scp sa-key.json ${BDS_VM_NAME}:/tmp/sa-key.json --zone="${BDS_ZONE}"
 ```
 
 ### 3.3 Run the deploy script
@@ -225,7 +229,7 @@ gcloud compute scp sa-key.json YOUR_VM_NAME:/tmp/sa-key.json --zone=YOUR_ZONE
 SSH into the VM and run the automated deployment:
 
 ```bash
-gcloud compute ssh YOUR_VM_NAME --zone=YOUR_ZONE
+gcloud compute ssh ${BDS_VM_NAME} --zone="${BDS_ZONE}"
 
 # On the VM:
 sudo -i
