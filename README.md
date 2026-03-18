@@ -20,27 +20,22 @@ A multi-domain mail server written in Go. Supports SMTP, POP3, IMAP, and a web i
 
 ## Architecture
 
-```
-                        Internet
-                           │
-              ┌────────────┼────────────┐
-              │            │            │
-              ▼            ▼            ▼
-         SMTP :25    POP3 :110    HTTPS :443
-         (receive     (mail        (web UI)
-          & relay)     clients)
-              │            │            │
-              └────────────┼────────────┘
-                           │
-                    ┌──────┴──────┐
-                    │    Store    │
-                    │   (facade)  │
-                    └──┬───────┬──┘
-                       │       │
-              ┌────────┘       └────────┐
-              ▼                        ▼
-          PostgreSQL              GCS Bucket
-          (metadata)              (mail bodies)
+```mermaid
+graph TD
+    Internet((Internet))
+
+    Internet --> SMTP["SMTP :25<br/>(receive & relay)"]
+    Internet --> POP3["POP3 :110<br/>(mail clients)"]
+    Internet --> IMAP["IMAP :143<br/>(mail clients)"]
+    Internet --> HTTPS["HTTPS :443<br/>(web UI)"]
+
+    SMTP --> Store["Store<br/>(facade)"]
+    POP3 --> Store
+    IMAP --> Store
+    HTTPS --> Store
+
+    Store --> PostgreSQL[(PostgreSQL<br/>metadata)]
+    Store --> GCS[(GCS Bucket<br/>mail bodies)]
 ```
 
 ## Prerequisites
