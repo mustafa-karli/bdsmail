@@ -1,0 +1,40 @@
+{{define "title"}}{{.Folder}}{{end}}
+{{define "content"}}
+<div class="card">
+    <div class="toolbar">
+        <div class="folder-tabs">
+            <a href="/inbox" class="{{if eq .Folder "INBOX"}}active{{end}}">Inbox</a>
+            <a href="/sent" class="{{if eq .Folder "Sent"}}active{{end}}">Sent</a>
+        </div>
+        <a href="/compose" class="btn btn-sm">Compose</a>
+    </div>
+    {{if .Messages}}
+    <table class="message-list">
+        <thead>
+            <tr>
+                <th>{{if eq .Folder "Sent"}}To{{else}}From{{end}}</th>
+                <th>Subject</th>
+                <th>Date</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range .Messages}}
+            <tr class="{{if not .Seen}}unread{{end}}">
+                <td>
+                    <a href="/message/{{.ID}}">
+                        {{if eq $.Folder "Sent"}}{{joinAddrs .To}}{{else}}{{.From}}{{end}}
+                    </a>
+                </td>
+                <td><a href="/message/{{.ID}}">{{if .Subject}}{{.Subject}}{{else}}(no subject){{end}}</a></td>
+                <td><a href="/message/{{.ID}}">{{formatTime .ReceivedAt}}</a></td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+    {{else}}
+    <div class="empty-state">
+        <p>No messages in {{.Folder}}.</p>
+    </div>
+    {{end}}
+</div>
+{{end}}

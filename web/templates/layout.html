@@ -1,0 +1,31 @@
+{{define "layout"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{template "title" .}} - BDS Mail</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    {{if .Email}}{{if ne .Email "admin"}}
+    <nav>
+        <div class="container">
+            <a href="/inbox" class="brand">BDS Mail</a>
+            <div class="nav-links">
+                <a href="/inbox">Inbox</a>
+                <a href="/compose">Compose</a>
+                <span class="user-info">{{if .DisplayName}}{{.DisplayName}}{{else}}{{.Email}}{{end}}</span>
+                <form action="/logout" method="POST" style="display:inline;">
+                    <button type="submit" class="btn btn-sm btn-secondary">Logout</button>
+                </form>
+            </div>
+        </div>
+    </nav>
+    {{end}}{{end}}
+    <div class="container">
+        {{template "content" .}}
+    </div>
+</body>
+</html>
+{{end}}

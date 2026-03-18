@@ -1,0 +1,108 @@
+{{define "title"}}Admin - Domains{{end}}
+{{define "content"}}
+{{if .Error}}
+<div class="login-container">
+    <div class="card">
+        <h2>Admin Access</h2>
+        <p>Enter admin secret to continue</p>
+        {{if .Error}}
+        <div class="alert alert-error">{{.Error}}</div>
+        {{end}}
+        <form method="POST" action="/admin/domains">
+            <input type="hidden" name="admin_action" value="login">
+            <div class="form-group">
+                <label for="admin_secret">Admin Secret</label>
+                <input type="password" id="admin_secret" name="admin_secret" required autofocus>
+            </div>
+            <button type="submit" class="btn" style="width:100%;">Sign In</button>
+        </form>
+    </div>
+</div>
+{{else if not .Email}}
+<div class="login-container">
+    <div class="card">
+        <h2>Admin Access</h2>
+        <p>Enter admin secret to continue</p>
+        <form method="POST" action="/admin/domains">
+            <input type="hidden" name="admin_action" value="login">
+            <div class="form-group">
+                <label for="admin_secret">Admin Secret</label>
+                <input type="password" id="admin_secret" name="admin_secret" required autofocus>
+            </div>
+            <button type="submit" class="btn" style="width:100%;">Sign In</button>
+        </form>
+    </div>
+</div>
+{{else}}
+{{$data := .Message}}
+<div class="card">
+    <div class="toolbar">
+        <h2>Domain Management</h2>
+        <form action="/admin/logout" method="POST" style="display:inline;">
+            <button type="submit" class="btn btn-sm btn-secondary">Logout</button>
+        </form>
+    </div>
+
+    {{if $data.Error}}
+    <div class="alert alert-error">{{$data.Error}}</div>
+    {{end}}
+
+    {{if $data.Result}}
+    <div class="alert alert-success">{{$data.Result.Message}}</div>
+    <div class="card" style="margin-top:12px; background:#f5faff;">
+        <h3 style="color:#1976D2; margin-bottom:12px;">DNS Records for {{$data.Result.Domain}}</h3>
+        <p style="margin-bottom:12px; color:#666; font-size:0.9em;">Add these records to your DNS provider (e.g. GoDaddy):</p>
+        <table class="message-list">
+            <thead>
+                <tr>
+                    <th>Type</th>
+                    <th>Name</th>
+                    <th>Value</th>
+                    <th>Priority</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range $data.Result.DNSRecords}}
+                <tr>
+                    <td><strong>{{.Type}}</strong></td>
+                    <td>{{.Name}}</td>
+                    <td style="word-break:break-all; max-width:400px; font-size:0.85em;">{{.Value}}</td>
+                    <td>{{.Priority}}</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+    {{end}}
+
+    <form method="POST" action="/admin/domains" style="margin-top:16px;">
+        <input type="hidden" name="admin_action" value="add_domain">
+        <div class="form-group" style="display:flex; gap:8px; align-items:end;">
+            <div style="flex:1;">
+                <label for="domain">New Domain</label>
+                <input type="text" id="domain" name="domain" placeholder="newdomain.com" required>
+            </div>
+            <button type="submit" class="btn" style="height:42px;">Add Domain</button>
+        </div>
+    </form>
+
+    <h3 style="color:#1976D2; margin-top:24px; margin-bottom:12px;">Active Domains</h3>
+    <table class="message-list">
+        <thead>
+            <tr>
+                <th>Domain</th>
+                <th>Mail Subdomain</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range $data.Domains}}
+            <tr>
+                <td>{{.}}</td>
+                <td>mail.{{.}}</td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+</div>
+{{end}}
+{{end}}

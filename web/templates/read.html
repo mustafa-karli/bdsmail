@@ -1,0 +1,27 @@
+{{define "title"}}{{.Message.Subject}}{{end}}
+{{define "content"}}
+<div class="card">
+    <div class="message-header">
+        <h2>{{if .Message.Subject}}{{.Message.Subject}}{{else}}(no subject){{end}}</h2>
+        <div class="message-meta">
+            <span><strong>From:</strong> {{.Message.From}}</span>
+            <span><strong>To:</strong> {{joinAddrs .Message.To}}</span>
+            {{if .Message.CC}}
+            <span><strong>CC:</strong> {{joinAddrs .Message.CC}}</span>
+            {{end}}
+            <span><strong>Date:</strong> {{formatTime .Message.ReceivedAt}}</span>
+        </div>
+    </div>
+    {{if eq .Message.ContentType "text/html"}}
+    <div class="message-body">{{safeHTML .Message.Body}}</div>
+    {{else}}
+    <div class="message-body text-body">{{.Message.Body}}</div>
+    {{end}}
+    <div class="message-actions">
+        <a href="/inbox" class="btn btn-secondary btn-sm">Back</a>
+        <form action="/message/{{.Message.ID}}/delete" method="POST" style="display:inline;">
+            <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Delete this message?')">Delete</button>
+        </form>
+    </div>
+</div>
+{{end}}
