@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/mustafakarli/bdsmail/config"
+	"github.com/mustafakarli/bdsmail/internal/carddav"
 	"github.com/mustafakarli/bdsmail/internal/security"
 	"github.com/mustafakarli/bdsmail/internal/smtp"
 	"github.com/mustafakarli/bdsmail/internal/store"
@@ -58,7 +59,7 @@ func NewServer(cfg *config.Config, s *store.Store, relay *smtp.Relay, checker *s
 
 	sessions := NewSessionStore()
 	handlers := NewHandlers(s, relay, sessions, cfg, checker)
-	adminHandlers := NewAdminHandlers(cfg, relay, certReloader)
+	adminHandlers := NewAdminHandlers(cfg, s, relay, certReloader)
 
 	return &Server{
 		cfg:          cfg,
@@ -126,8 +127,48 @@ func (s *Server) Start() error {
 
 	mux.HandleFunc("/admin/api/domains", s.admin.HandleAdminAPI)
 
+	mux.HandleFunc("/admin/users", func(w http.ResponseWriter, r *http.Request) {
+		s.admin.HandleAdminUsers(w, r, s.renderer("admin_users"))
+	})
+
+	mux.HandleFunc("/admin/aliases", func(w http.ResponseWriter, r *http.Request) {
+		s.admin.HandleAdminAliases(w, r, s.renderer("admin_aliases"))
+	})
+
+	mux.HandleFunc("/admin/lists", func(w http.ResponseWriter, r *http.Request) {
+		s.admin.HandleAdminLists(w, r, s.renderer("admin_lists"))
+	})
+
 	mux.HandleFunc("/admin/logout", func(w http.ResponseWriter, r *http.Request) {
 		s.admin.HandleAdminLogout(w, r)
+	})
+
+	// User settings routes
+	mux.HandleFunc("/filters", func(w http.ResponseWriter, r *http.Request) {
+		s.handlers.HandleFilters(w, r, s.renderer("filters"))
+	})
+
+	mux.HandleFunc("/settings/autoreply", func(w http.ResponseWriter, r *http.Request) {
+		s.handlers.HandleAutoReply(w, r, s.renderer("autoreply"))
+	})
+
+	mux.HandleFunc("/contacts", func(w http.ResponseWriter, r *http.Request) {
+		s.handlers.HandleContacts(w, r, s.renderer("contacts"))
+	})
+
+	mux.HandleFunc("/search", func(w http.ResponseWriter, r *http.Request) {
+		s.handlers.HandleSearch(w, r, s.renderer("inbox"))
+	})
+
+	mux.HandleFunc("/folder/", func(w http.ResponseWriter, r *http.Request) {
+		s.handlers.HandleFolder(w, r, s.renderer("inbox"))
+	})
+
+	// CardDAV
+	carddavHandler := carddav.NewHandler(s.handlers.store)
+	mux.Handle("/carddav/", carddavHandler)
+	mux.HandleFunc("/.well-known/carddav", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/carddav/", http.StatusMovedPermanently)
 	})
 
 	addr := ":" + s.cfg.HTTPSPort

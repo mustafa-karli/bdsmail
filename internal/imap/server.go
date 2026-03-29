@@ -173,6 +173,17 @@ func (sess *imapSession) handleList(tag, args string) {
 
 	sess.send(`* LIST (\HasNoChildren) "/" "INBOX"`)
 	sess.send(`* LIST (\HasNoChildren) "/" "Sent"`)
+
+	// Dynamic folders from filters
+	folders, err := sess.store.DB.ListUserFolders(sess.username)
+	if err == nil {
+		for _, f := range folders {
+			if f != "INBOX" && f != "Sent" {
+				sess.send(fmt.Sprintf(`* LIST (\HasNoChildren) "/" %q`, f))
+			}
+		}
+	}
+
 	sess.send(fmt.Sprintf("%s OK LIST completed", tag))
 }
 
@@ -371,6 +382,29 @@ func (sess *imapSession) handleSearch(tag, args string) {
 	upperArgs := strings.ToUpper(args)
 	var result []string
 
+	// Check for TEXT search
+	if strings.Contains(upperArgs, "TEXT") {
+		// Extract search query from TEXT "query" or TEXT query
+		textQuery := extractSearchQuery(args, "TEXT")
+		if textQuery != "" {
+			searchResults, err := sess.store.DB.SearchMessages(sess.username, textQuery)
+			if err == nil {
+				searchIDs := make(map[string]bool)
+				for _, m := range searchResults {
+					searchIDs[m.ID] = true
+				}
+				for i, msg := range msgs {
+					if searchIDs[msg.ID] {
+						result = append(result, fmt.Sprintf("%d", i+1))
+					}
+				}
+				sess.send(fmt.Sprintf("* SEARCH %s", strings.Join(result, " ")))
+				sess.send(fmt.Sprintf("%s OK SEARCH completed", tag))
+				return
+			}
+		}
+	}
+
 	for i, msg := range msgs {
 		match := true
 		if strings.Contains(upperArgs, "UNSEEN") && msg.Seen {
@@ -421,6 +455,29 @@ func buildHeader(msg *model.Message) string {
 
 func estimateRFC822Size(msg *model.Message) int {
 	return len(buildHeader(msg)) + 500
+}
+
+func extractSearchQuery(args, keyword string) string {
+	upper := strings.ToUpper(args)
+	idx := strings.Index(upper, keyword)
+	if idx < 0 {
+		return ""
+	}
+	rest := strings.TrimSpace(args[idx+len(keyword):])
+	if len(rest) == 0 {
+		return ""
+	}
+	if rest[0] == '"' {
+		end := strings.Index(rest[1:], "\"")
+		if end >= 0 {
+			return rest[1 : end+1]
+		}
+		return rest[1:]
+	}
+	if spaceIdx := strings.IndexByte(rest, ' '); spaceIdx >= 0 {
+		return rest[:spaceIdx]
+	}
+	return rest
 }
 
 func escapeIMAPString(s string) string {

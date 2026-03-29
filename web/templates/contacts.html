@@ -1,0 +1,48 @@
+{{define "title-contacts"}}Contacts{{end}}
+{{define "content-contacts"}}
+<div class="card">
+    <div class="toolbar">
+        <h2>Contacts</h2>
+        <a href="/inbox" class="btn btn-sm btn-secondary">Back to Inbox</a>
+    </div>
+
+    {{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+    {{if .Success}}<div class="alert alert-success">{{.Success}}</div>{{end}}
+
+    <form method="POST" action="/contacts" style="margin-top:16px;">
+        <input type="hidden" name="action" value="create">
+        <h3 style="color:#1976D2; margin-bottom:12px;">Add Contact</h3>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:end;">
+            <div style="flex:1;"><label>Name</label><input type="text" name="name" placeholder="Full Name" required></div>
+            <div style="flex:1;"><label>Email</label><input type="email" name="contact_email" placeholder="email@example.com" required></div>
+            <div style="flex:1;"><label>Phone</label><input type="text" name="phone" placeholder="+1234567890"></div>
+            <button type="submit" class="btn" style="height:42px;">Add</button>
+        </div>
+    </form>
+
+    <h3 style="color:#1976D2; margin-top:24px; margin-bottom:12px;">Your Contacts ({{len .Contacts}})</h3>
+    <table class="message-list">
+        <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Actions</th></tr></thead>
+        <tbody>
+            {{range .Contacts}}
+            <tr>
+                <td>{{.Name}}</td>
+                <td>{{.Email}}</td>
+                <td>{{.Phone}}</td>
+                <td>
+                    <form method="POST" action="/contacts" style="display:inline;">
+                        <input type="hidden" name="action" value="delete">
+                        <input type="hidden" name="contact_id" value="{{.ID}}">
+                        <button type="submit" class="btn btn-sm btn-secondary">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+
+    <p style="margin-top:16px; color:#666; font-size:0.9em;">
+        CardDAV URL: <code>https://{{.Domain}}/carddav/{{.Email}}/default/</code>
+    </p>
+</div>
+{{end}}

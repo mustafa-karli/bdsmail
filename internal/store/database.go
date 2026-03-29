@@ -20,16 +20,74 @@ const (
 	QMarkSeen        = "mark_seen"
 	QMarkDeleted     = "mark_deleted"
 	QDeleteMessage   = "delete_message"
+
+	// User provisioning
+	QListUsers         = "list_users"
+	QListUsersByDomain = "list_users_by_domain"
+	QUpdateUser        = "update_user"
+	QDeleteUser        = "delete_user"
+	QDeleteUserMessages = "delete_user_messages"
+
+	// Aliases
+	QCreateAlias = "create_alias"
+	QGetAlias    = "get_alias"
+	QListAliases = "list_aliases"
+	QUpdateAlias = "update_alias"
+	QDeleteAlias = "delete_alias"
+	QGetCatchAll = "get_catch_all"
+
+	// Mailing lists
+	QCreateMailingList = "create_mailing_list"
+	QGetMailingList    = "get_mailing_list"
+	QListMailingLists  = "list_mailing_lists"
+	QDeleteMailingList = "delete_mailing_list"
+	QAddListMember     = "add_list_member"
+	QRemoveListMember  = "remove_list_member"
+	QGetListMembers    = "get_list_members"
+	QIsMailingList     = "is_mailing_list"
+	QDeleteListMembers = "delete_list_members"
+
+	// Filters
+	QCreateFilter = "create_filter"
+	QListFilters  = "list_filters"
+	QUpdateFilter = "update_filter"
+	QDeleteFilter = "delete_filter"
+	QListUserFolders = "list_user_folders"
+
+	// Auto-reply
+	QSetAutoReply          = "set_auto_reply"
+	QGetAutoReply          = "get_auto_reply"
+	QDeleteAutoReply       = "delete_auto_reply"
+	QRecordAutoReplySent   = "record_auto_reply_sent"
+	QHasAutoRepliedRecently = "has_auto_replied_recently"
+
+	// Search
+	QSearchMessages = "search_messages"
+
+	// Contacts
+	QCreateContact = "create_contact"
+	QGetContact    = "get_contact"
+	QListContacts  = "list_contacts"
+	QUpdateContact = "update_contact"
+	QDeleteContact = "delete_contact"
 )
 
 // Database is the interface all database backends implement.
 type Database interface {
 	Close() error
 	GetQueries() map[string]string
+
+	// User operations
 	CreateUser(username, domain, displayName, passwordHash string) error
 	GetUser(username, domain string) (*model.User, error)
 	GetUserByEmail(email string) (*model.User, error)
 	UserExistsByEmail(email string) bool
+	ListUsers() ([]*model.User, error)
+	ListUsersByDomain(domain string) ([]*model.User, error)
+	UpdateUser(email, displayName, passwordHash string) error
+	DeleteUser(email string) error
+
+	// Message operations
 	SaveMessage(msg *model.Message) error
 	ListMessages(ownerEmail, folder string) ([]*model.Message, error)
 	ListAllMessages(ownerEmail string) ([]*model.Message, error)
@@ -37,6 +95,47 @@ type Database interface {
 	MarkSeen(id string) error
 	MarkDeleted(id string) error
 	DeleteMessage(id string) error
+	DeleteUserMessages(email string) error
+	SearchMessages(ownerEmail, query string) ([]*model.Message, error)
+	ListUserFolders(ownerEmail string) ([]string, error)
+
+	// Alias operations
+	CreateAlias(aliasEmail string, targetEmails []string) error
+	GetAlias(aliasEmail string) ([]string, error)
+	ListAliases() ([]*model.Alias, error)
+	UpdateAlias(aliasEmail string, targetEmails []string) error
+	DeleteAlias(aliasEmail string) error
+	GetCatchAll(domain string) ([]string, error)
+
+	// Mailing list operations
+	CreateMailingList(listAddr, name, description, ownerEmail string) error
+	GetMailingList(listAddr string) (*model.MailingList, error)
+	ListMailingLists() ([]*model.MailingList, error)
+	DeleteMailingList(listAddr string) error
+	AddListMember(listAddr, memberEmail string) error
+	RemoveListMember(listAddr, memberEmail string) error
+	GetListMembers(listAddr string) ([]string, error)
+	IsMailingList(email string) bool
+
+	// Filter operations
+	CreateFilter(filter *model.Filter) error
+	ListFilters(userEmail string) ([]*model.Filter, error)
+	UpdateFilter(filter *model.Filter) error
+	DeleteFilter(id string) error
+
+	// Auto-reply operations
+	SetAutoReply(reply *model.AutoReply) error
+	GetAutoReply(userEmail string) (*model.AutoReply, error)
+	DeleteAutoReply(userEmail string) error
+	RecordAutoReplySent(userEmail, senderEmail string) error
+	HasAutoRepliedRecently(userEmail, senderEmail string, cooldown time.Duration) bool
+
+	// Contact operations
+	CreateContact(contact *model.Contact) error
+	GetContact(id string) (*model.Contact, error)
+	ListContacts(ownerEmail string) ([]*model.Contact, error)
+	UpdateContact(contact *model.Contact) error
+	DeleteContact(id string) error
 }
 
 // NoSQL document structs — shared by DynamoDB and Firestore via dual tags.
@@ -326,4 +425,359 @@ func SplitEmail(email string) (string, string) {
 		}
 	}
 	return email, ""
+}
+
+// --- User provisioning ---
+
+func (db *DbSQL) ListUsers() ([]*model.User, error) {
+	rows, err := db.Conn.Query(db.Queries[QListUsers])
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return db.scanUsers(rows)
+}
+
+func (db *DbSQL) ListUsersByDomain(domain string) ([]*model.User, error) {
+	rows, err := db.Conn.Query(db.Queries[QListUsersByDomain], domain)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return db.scanUsers(rows)
+}
+
+func (db *DbSQL) UpdateUser(email, displayName, passwordHash string) error {
+	username, domain := SplitEmail(email)
+	if passwordHash == "" {
+		_, err := db.Conn.Exec("UPDATE users SET display_name = ? WHERE username = ? AND domain = ?", displayName, username, domain)
+		return err
+	}
+	_, err := db.Conn.Exec(db.Queries[QUpdateUser], displayName, passwordHash, username, domain)
+	return err
+}
+
+func (db *DbSQL) DeleteUser(email string) error {
+	username, domain := SplitEmail(email)
+	_, err := db.Conn.Exec(db.Queries[QDeleteUser], username, domain)
+	return err
+}
+
+func (db *DbSQL) DeleteUserMessages(email string) error {
+	_, err := db.Conn.Exec(db.Queries[QDeleteUserMessages], email)
+	return err
+}
+
+func (db *DbSQL) scanUsers(rows *sql.Rows) ([]*model.User, error) {
+	var users []*model.User
+	for rows.Next() {
+		u := &model.User{}
+		var createdAt interface{}
+		err := rows.Scan(&u.ID, &u.Username, &u.Domain, &u.DisplayName, &u.PasswordHash, &createdAt)
+		if err != nil {
+			return nil, err
+		}
+		u.CreatedAt = scanTime(createdAt)
+		users = append(users, u)
+	}
+	return users, nil
+}
+
+// --- Alias operations ---
+
+func (db *DbSQL) CreateAlias(aliasEmail string, targetEmails []string) error {
+	isCatchAll := len(aliasEmail) > 0 && aliasEmail[0] == '@'
+	targetsJSON, _ := json.Marshal(targetEmails)
+	_, err := db.Conn.Exec(db.Queries[QCreateAlias], aliasEmail, string(targetsJSON), db.FormatBool(isCatchAll))
+	return err
+}
+
+func (db *DbSQL) GetAlias(aliasEmail string) ([]string, error) {
+	var targetsJSON string
+	err := db.Conn.QueryRow(db.Queries[QGetAlias], aliasEmail).Scan(&targetsJSON)
+	if err != nil {
+		return nil, err
+	}
+	var targets []string
+	json.Unmarshal([]byte(targetsJSON), &targets)
+	return targets, nil
+}
+
+func (db *DbSQL) ListAliases() ([]*model.Alias, error) {
+	rows, err := db.Conn.Query(db.Queries[QListAliases])
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var aliases []*model.Alias
+	for rows.Next() {
+		a := &model.Alias{}
+		var targetsJSON string
+		var isCatchAll interface{}
+		if err := rows.Scan(&a.AliasEmail, &targetsJSON, &isCatchAll); err != nil {
+			return nil, err
+		}
+		json.Unmarshal([]byte(targetsJSON), &a.TargetEmails)
+		a.IsCatchAll = scanBool(isCatchAll)
+		aliases = append(aliases, a)
+	}
+	return aliases, nil
+}
+
+func (db *DbSQL) UpdateAlias(aliasEmail string, targetEmails []string) error {
+	targetsJSON, _ := json.Marshal(targetEmails)
+	_, err := db.Conn.Exec(db.Queries[QUpdateAlias], string(targetsJSON), aliasEmail)
+	return err
+}
+
+func (db *DbSQL) DeleteAlias(aliasEmail string) error {
+	_, err := db.Conn.Exec(db.Queries[QDeleteAlias], aliasEmail)
+	return err
+}
+
+func (db *DbSQL) GetCatchAll(domain string) ([]string, error) {
+	return db.GetAlias("@" + domain)
+}
+
+// --- Mailing list operations ---
+
+func (db *DbSQL) CreateMailingList(listAddr, name, description, ownerEmail string) error {
+	_, err := db.Conn.Exec(db.Queries[QCreateMailingList], listAddr, name, description, ownerEmail)
+	return err
+}
+
+func (db *DbSQL) GetMailingList(listAddr string) (*model.MailingList, error) {
+	ml := &model.MailingList{}
+	var createdAt interface{}
+	err := db.Conn.QueryRow(db.Queries[QGetMailingList], listAddr).Scan(
+		&ml.ListAddress, &ml.Name, &ml.Description, &ml.OwnerEmail, &createdAt)
+	if err != nil {
+		return nil, err
+	}
+	ml.CreatedAt = scanTime(createdAt)
+	return ml, nil
+}
+
+func (db *DbSQL) ListMailingLists() ([]*model.MailingList, error) {
+	rows, err := db.Conn.Query(db.Queries[QListMailingLists])
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var lists []*model.MailingList
+	for rows.Next() {
+		ml := &model.MailingList{}
+		var createdAt interface{}
+		if err := rows.Scan(&ml.ListAddress, &ml.Name, &ml.Description, &ml.OwnerEmail, &createdAt); err != nil {
+			return nil, err
+		}
+		ml.CreatedAt = scanTime(createdAt)
+		lists = append(lists, ml)
+	}
+	return lists, nil
+}
+
+func (db *DbSQL) DeleteMailingList(listAddr string) error {
+	db.Conn.Exec(db.Queries[QDeleteListMembers], listAddr)
+	_, err := db.Conn.Exec(db.Queries[QDeleteMailingList], listAddr)
+	return err
+}
+
+func (db *DbSQL) AddListMember(listAddr, memberEmail string) error {
+	_, err := db.Conn.Exec(db.Queries[QAddListMember], listAddr, memberEmail)
+	return err
+}
+
+func (db *DbSQL) RemoveListMember(listAddr, memberEmail string) error {
+	_, err := db.Conn.Exec(db.Queries[QRemoveListMember], listAddr, memberEmail)
+	return err
+}
+
+func (db *DbSQL) GetListMembers(listAddr string) ([]string, error) {
+	rows, err := db.Conn.Query(db.Queries[QGetListMembers], listAddr)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var members []string
+	for rows.Next() {
+		var email string
+		if err := rows.Scan(&email); err != nil {
+			return nil, err
+		}
+		members = append(members, email)
+	}
+	return members, nil
+}
+
+func (db *DbSQL) IsMailingList(email string) bool {
+	var count int
+	db.Conn.QueryRow(db.Queries[QIsMailingList], email).Scan(&count)
+	return count > 0
+}
+
+// --- Filter operations ---
+
+func (db *DbSQL) CreateFilter(filter *model.Filter) error {
+	condJSON, _ := json.Marshal(filter.Conditions)
+	actJSON, _ := json.Marshal(filter.Actions)
+	_, err := db.Conn.Exec(db.Queries[QCreateFilter],
+		filter.ID, filter.UserEmail, filter.Name, filter.Priority,
+		string(condJSON), string(actJSON), db.FormatBool(filter.Enabled))
+	return err
+}
+
+func (db *DbSQL) ListFilters(userEmail string) ([]*model.Filter, error) {
+	rows, err := db.Conn.Query(db.Queries[QListFilters], userEmail)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var filters []*model.Filter
+	for rows.Next() {
+		f := &model.Filter{}
+		var condJSON, actJSON string
+		var enabled interface{}
+		if err := rows.Scan(&f.ID, &f.UserEmail, &f.Name, &f.Priority, &condJSON, &actJSON, &enabled); err != nil {
+			return nil, err
+		}
+		json.Unmarshal([]byte(condJSON), &f.Conditions)
+		json.Unmarshal([]byte(actJSON), &f.Actions)
+		f.Enabled = scanBool(enabled)
+		filters = append(filters, f)
+	}
+	return filters, nil
+}
+
+func (db *DbSQL) UpdateFilter(filter *model.Filter) error {
+	condJSON, _ := json.Marshal(filter.Conditions)
+	actJSON, _ := json.Marshal(filter.Actions)
+	_, err := db.Conn.Exec(db.Queries[QUpdateFilter],
+		filter.Name, filter.Priority, string(condJSON), string(actJSON), db.FormatBool(filter.Enabled), filter.ID)
+	return err
+}
+
+func (db *DbSQL) DeleteFilter(id string) error {
+	_, err := db.Conn.Exec(db.Queries[QDeleteFilter], id)
+	return err
+}
+
+func (db *DbSQL) ListUserFolders(ownerEmail string) ([]string, error) {
+	rows, err := db.Conn.Query(db.Queries[QListUserFolders], ownerEmail)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var folders []string
+	for rows.Next() {
+		var folder string
+		if err := rows.Scan(&folder); err != nil {
+			return nil, err
+		}
+		folders = append(folders, folder)
+	}
+	return folders, nil
+}
+
+// --- Auto-reply operations ---
+
+func (db *DbSQL) SetAutoReply(reply *model.AutoReply) error {
+	_, err := db.Conn.Exec(db.Queries[QSetAutoReply],
+		reply.UserEmail, db.FormatBool(reply.Enabled), reply.Subject, reply.Body,
+		db.FormatTime(reply.StartDate), db.FormatTime(reply.EndDate))
+	return err
+}
+
+func (db *DbSQL) GetAutoReply(userEmail string) (*model.AutoReply, error) {
+	r := &model.AutoReply{}
+	var enabled, startDate, endDate interface{}
+	err := db.Conn.QueryRow(db.Queries[QGetAutoReply], userEmail).Scan(
+		&r.UserEmail, &enabled, &r.Subject, &r.Body, &startDate, &endDate)
+	if err != nil {
+		return nil, err
+	}
+	r.Enabled = scanBool(enabled)
+	r.StartDate = scanTime(startDate)
+	r.EndDate = scanTime(endDate)
+	return r, nil
+}
+
+func (db *DbSQL) DeleteAutoReply(userEmail string) error {
+	_, err := db.Conn.Exec(db.Queries[QDeleteAutoReply], userEmail)
+	return err
+}
+
+func (db *DbSQL) RecordAutoReplySent(userEmail, senderEmail string) error {
+	_, err := db.Conn.Exec(db.Queries[QRecordAutoReplySent], userEmail, senderEmail)
+	return err
+}
+
+func (db *DbSQL) HasAutoRepliedRecently(userEmail, senderEmail string, cooldown time.Duration) bool {
+	var count int
+	cutoff := time.Now().Add(-cooldown)
+	db.Conn.QueryRow(db.Queries[QHasAutoRepliedRecently], userEmail, senderEmail, db.FormatTime(cutoff)).Scan(&count)
+	return count > 0
+}
+
+// --- Search operations ---
+
+func (db *DbSQL) SearchMessages(ownerEmail, query string) ([]*model.Message, error) {
+	rows, err := db.Conn.Query(db.Queries[QSearchMessages], ownerEmail, "%"+query+"%", "%"+query+"%", "%"+query+"%", "%"+query+"%")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return db.scanMessages(rows)
+}
+
+// --- Contact operations ---
+
+func (db *DbSQL) CreateContact(contact *model.Contact) error {
+	_, err := db.Conn.Exec(db.Queries[QCreateContact],
+		contact.ID, contact.OwnerEmail, contact.VCardData, contact.ETag)
+	return err
+}
+
+func (db *DbSQL) GetContact(id string) (*model.Contact, error) {
+	c := &model.Contact{}
+	var createdAt, updatedAt interface{}
+	err := db.Conn.QueryRow(db.Queries[QGetContact], id).Scan(
+		&c.ID, &c.OwnerEmail, &c.VCardData, &c.ETag, &createdAt, &updatedAt)
+	if err != nil {
+		return nil, err
+	}
+	c.CreatedAt = scanTime(createdAt)
+	c.UpdatedAt = scanTime(updatedAt)
+	return c, nil
+}
+
+func (db *DbSQL) ListContacts(ownerEmail string) ([]*model.Contact, error) {
+	rows, err := db.Conn.Query(db.Queries[QListContacts], ownerEmail)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var contacts []*model.Contact
+	for rows.Next() {
+		c := &model.Contact{}
+		var createdAt, updatedAt interface{}
+		if err := rows.Scan(&c.ID, &c.OwnerEmail, &c.VCardData, &c.ETag, &createdAt, &updatedAt); err != nil {
+			return nil, err
+		}
+		c.CreatedAt = scanTime(createdAt)
+		c.UpdatedAt = scanTime(updatedAt)
+		contacts = append(contacts, c)
+	}
+	return contacts, nil
+}
+
+func (db *DbSQL) UpdateContact(contact *model.Contact) error {
+	_, err := db.Conn.Exec(db.Queries[QUpdateContact],
+		contact.VCardData, contact.ETag, contact.ID)
+	return err
+}
+
+func (db *DbSQL) DeleteContact(id string) error {
+	_, err := db.Conn.Exec(db.Queries[QDeleteContact], id)
+	return err
 }

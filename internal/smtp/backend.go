@@ -13,7 +13,9 @@ import (
 
 	gosmtp "github.com/emersion/go-smtp"
 	"github.com/mustafakarli/bdsmail/config"
+	"github.com/mustafakarli/bdsmail/internal/filter"
 	"github.com/mustafakarli/bdsmail/internal/mimeutil"
+	"github.com/mustafakarli/bdsmail/internal/model"
 	"github.com/mustafakarli/bdsmail/internal/security"
 	"github.com/mustafakarli/bdsmail/internal/store"
 )
@@ -239,16 +241,107 @@ func (s *Session) handleInbound(ctx context.Context, rawEmail []byte, from strin
 		}
 	}
 
-	err := s.backend.store.SaveIncomingMail(ctx, from, to, cc, bcc, subject, parsed.ContentType, parsed.TextBody, folder, parsed.Attachments)
-	if err != nil {
-		log.Printf("failed to save incoming mail: %v", err)
-		return &gosmtp.SMTPError{
-			Code:    451,
-			Message: "Internal server error",
+	// Check mailing lists — distribute to all members
+	allRecipients := append(append(to, cc...), bcc...)
+	for _, addr := range allRecipients {
+		if s.backend.store.DB.IsMailingList(addr) {
+			if err := s.backend.store.DistributeToList(ctx, addr, from, to, cc, bcc, subject, parsed.ContentType, parsed.TextBody, parsed.Attachments); err != nil {
+				log.Printf("mailing list distribution error for %s: %v", addr, err)
+			}
+			// Remove list address from recipients so it's not delivered as normal
+			to = removeAddr(to, addr)
+			cc = removeAddr(cc, addr)
+			bcc = removeAddr(bcc, addr)
+		}
+	}
+
+	// Apply filters per recipient and save
+	if len(to) > 0 || len(cc) > 0 || len(bcc) > 0 {
+		// Parse raw headers for filter matching
+		rawHeaders := parseRawHeaders(rawEmail)
+
+		// Build a temporary message for filter evaluation
+		tmpMsg := &model.Message{
+			From:        from,
+			To:          to,
+			CC:          cc,
+			Subject:     subject,
+			ContentType: parsed.ContentType,
+			Body:        parsed.TextBody,
+		}
+		for _, att := range parsed.Attachments {
+			tmpMsg.Attachments = append(tmpMsg.Attachments, model.Attachment{
+				Filename: att.Filename,
+				Size:     int64(len(att.Data)),
+			})
+		}
+
+		// Resolve recipients (aliases) and deliver with per-user filters
+		allAddrs := append(append(to, cc...), bcc...)
+		delivered := make(map[string]bool)
+		for _, addr := range allAddrs {
+			resolved := s.backend.store.ResolveRecipient(addr, 0)
+			for _, target := range resolved {
+				if delivered[target] {
+					continue
+				}
+				delivered[target] = true
+
+				userFolder := folder
+				userSeen := false
+
+				// Apply user filters
+				filters, err := s.backend.store.DB.ListFilters(target)
+				if err == nil && len(filters) > 0 {
+					result := filter.Apply(filters, tmpMsg, rawHeaders)
+					if result.Delete {
+						continue // skip delivery
+					}
+					if result.Folder != "" {
+						userFolder = result.Folder
+					}
+					if result.MarkRead {
+						userSeen = true
+					}
+				}
+
+				if err := s.backend.store.SaveIncomingMailForUser(ctx, target, from, to, cc, subject, parsed.ContentType, parsed.TextBody, userFolder, userSeen, parsed.Attachments); err != nil {
+					log.Printf("failed to save mail for %s: %v", target, err)
+				}
+
+				// Auto-reply in background
+				go s.backend.store.ProcessAutoReply(context.Background(), target, from, s.backend.relay)
+			}
 		}
 	}
 
 	return nil
+}
+
+func removeAddr(addrs []string, target string) []string {
+	var result []string
+	for _, a := range addrs {
+		if a != target {
+			result = append(result, a)
+		}
+	}
+	return result
+}
+
+func parseRawHeaders(rawEmail []byte) map[string]string {
+	headers := make(map[string]string)
+	lines := strings.SplitN(string(rawEmail), "\r\n\r\n", 2)
+	if len(lines) == 0 {
+		return headers
+	}
+	for _, line := range strings.Split(lines[0], "\r\n") {
+		if idx := strings.Index(line, ":"); idx > 0 {
+			key := strings.ToLower(strings.TrimSpace(line[:idx]))
+			value := strings.TrimSpace(line[idx+1:])
+			headers[key] = value
+		}
+	}
+	return headers
 }
 
 func (s *Session) Reset() {

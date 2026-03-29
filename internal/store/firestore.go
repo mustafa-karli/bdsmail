@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"cloud.google.com/go/firestore"
@@ -13,6 +15,61 @@ import (
 type DbFirestore struct {
 	DbBase
 	client *firestore.Client
+}
+
+// Firestore-specific document structs (not shared with DynamoDB).
+
+type docAlias struct {
+	AliasEmail   string `firestore:"alias_email"`
+	TargetEmails string `firestore:"target_emails"` // JSON array
+	IsCatchAll   bool   `firestore:"is_catch_all"`
+}
+
+type docMailingList struct {
+	ListAddress string `firestore:"list_address"`
+	Name        string `firestore:"name"`
+	Description string `firestore:"description"`
+	OwnerEmail  string `firestore:"owner_email"`
+	CreatedAt   string `firestore:"created_at"`
+}
+
+type docListMember struct {
+	ListAddress string `firestore:"list_address"`
+	MemberEmail string `firestore:"member_email"`
+}
+
+type docFilter struct {
+	ID         string `firestore:"id"`
+	UserEmail  string `firestore:"user_email"`
+	Name       string `firestore:"name"`
+	Priority   int    `firestore:"priority"`
+	Conditions string `firestore:"conditions"` // JSON
+	Actions    string `firestore:"actions"`    // JSON
+	Enabled    bool   `firestore:"enabled"`
+}
+
+type docAutoReply struct {
+	UserEmail string `firestore:"user_email"`
+	Enabled   bool   `firestore:"enabled"`
+	Subject   string `firestore:"subject"`
+	Body      string `firestore:"body"`
+	StartDate string `firestore:"start_date"`
+	EndDate   string `firestore:"end_date"`
+}
+
+type docAutoReplyLog struct {
+	UserEmail   string `firestore:"user_email"`
+	SenderEmail string `firestore:"sender_email"`
+	SentAt      string `firestore:"sent_at"`
+}
+
+type docContact struct {
+	ID         string `firestore:"id"`
+	OwnerEmail string `firestore:"owner_email"`
+	VCardData  string `firestore:"vcard_data"`
+	ETag       string `firestore:"etag"`
+	CreatedAt  string `firestore:"created_at"`
+	UpdatedAt  string `firestore:"updated_at"`
 }
 
 // Uses shared docUser and docMessage structs from database.go
@@ -34,6 +91,8 @@ func (db *DbFirestore) GetQueries() map[string]string {
 	return nil // Firestore does not use SQL queries
 }
 
+// Collection helpers
+
 func (db *DbFirestore) users() *firestore.CollectionRef {
 	return db.client.Collection("bdsmail-users")
 }
@@ -42,7 +101,35 @@ func (db *DbFirestore) messages() *firestore.CollectionRef {
 	return db.client.Collection("bdsmail-messages")
 }
 
-// User operations
+func (db *DbFirestore) aliases() *firestore.CollectionRef {
+	return db.client.Collection("bdsmail-aliases")
+}
+
+func (db *DbFirestore) mailingLists() *firestore.CollectionRef {
+	return db.client.Collection("bdsmail-mailing-lists")
+}
+
+func (db *DbFirestore) listMembers() *firestore.CollectionRef {
+	return db.client.Collection("bdsmail-list-members")
+}
+
+func (db *DbFirestore) filters() *firestore.CollectionRef {
+	return db.client.Collection("bdsmail-filters")
+}
+
+func (db *DbFirestore) autoReplies() *firestore.CollectionRef {
+	return db.client.Collection("bdsmail-auto-replies")
+}
+
+func (db *DbFirestore) autoReplyLog() *firestore.CollectionRef {
+	return db.client.Collection("bdsmail-auto-reply-log")
+}
+
+func (db *DbFirestore) contacts() *firestore.CollectionRef {
+	return db.client.Collection("bdsmail-contacts")
+}
+
+// ---- User operations ----
 
 func (db *DbFirestore) CreateUser(username, domain, displayName, passwordHash string) error {
 	email := username + "@" + domain
@@ -83,7 +170,102 @@ func (db *DbFirestore) UserExistsByEmail(email string) bool {
 	return err == nil
 }
 
-// Message operations
+func (db *DbFirestore) ListUsers() ([]*model.User, error) {
+	iter := db.users().
+		OrderBy("domain", firestore.Asc).
+		Documents(context.Background())
+	defer iter.Stop()
+	var users []*model.User
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		var fu docUser
+		if err := doc.DataTo(&fu); err != nil {
+			return nil, err
+		}
+		users = append(users, db.docUserToModel(&fu))
+	}
+	return users, nil
+}
+
+func (db *DbFirestore) ListUsersByDomain(domain string) ([]*model.User, error) {
+	iter := db.users().
+		Where("domain", "==", domain).
+		Documents(context.Background())
+	defer iter.Stop()
+	var users []*model.User
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		var fu docUser
+		if err := doc.DataTo(&fu); err != nil {
+			return nil, err
+		}
+		users = append(users, db.docUserToModel(&fu))
+	}
+	return users, nil
+}
+
+func (db *DbFirestore) UpdateUser(email, displayName, passwordHash string) error {
+	updates := []firestore.Update{
+		{Path: "display_name", Value: displayName},
+	}
+	if passwordHash != "" {
+		updates = append(updates, firestore.Update{Path: "password_hash", Value: passwordHash})
+	}
+	_, err := db.users().Doc(email).Update(context.Background(), updates)
+	return err
+}
+
+func (db *DbFirestore) DeleteUser(email string) error {
+	_, err := db.users().Doc(email).Delete(context.Background())
+	return err
+}
+
+func (db *DbFirestore) DeleteUserMessages(email string) error {
+	ctx := context.Background()
+	iter := db.messages().
+		Where("owner_user", "==", email).
+		Documents(ctx)
+	defer iter.Stop()
+	batch := db.client.Batch()
+	count := 0
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		batch.Delete(doc.Ref)
+		count++
+		if count%400 == 0 {
+			if _, err := batch.Commit(ctx); err != nil {
+				return err
+			}
+			batch = db.client.Batch()
+		}
+	}
+	if count%400 != 0 {
+		if _, err := batch.Commit(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ---- Message operations ----
 
 func (db *DbFirestore) SaveMessage(msg *model.Message) error {
 	fm := docMessage{
@@ -158,6 +340,65 @@ func (db *DbFirestore) DeleteMessage(id string) error {
 	return err
 }
 
+func (db *DbFirestore) SearchMessages(ownerEmail, query string) ([]*model.Message, error) {
+	iter := db.messages().
+		Where("owner_user", "==", ownerEmail).
+		Where("deleted", "==", false).
+		OrderBy("received_at", firestore.Desc).
+		Documents(context.Background())
+	defer iter.Stop()
+	lowerQuery := strings.ToLower(query)
+	var messages []*model.Message
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		var fm docMessage
+		if err := doc.DataTo(&fm); err != nil {
+			return nil, err
+		}
+		if strings.Contains(strings.ToLower(fm.Subject), lowerQuery) ||
+			strings.Contains(strings.ToLower(fm.From), lowerQuery) ||
+			strings.Contains(strings.ToLower(fm.ToAddrs), lowerQuery) ||
+			strings.Contains(strings.ToLower(fm.Body), lowerQuery) {
+			messages = append(messages, db.docMessageToModel(&fm))
+		}
+	}
+	return messages, nil
+}
+
+func (db *DbFirestore) ListUserFolders(ownerEmail string) ([]string, error) {
+	iter := db.messages().
+		Where("owner_user", "==", ownerEmail).
+		Where("deleted", "==", false).
+		Documents(context.Background())
+	defer iter.Stop()
+	seen := make(map[string]bool)
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		var fm docMessage
+		if err := doc.DataTo(&fm); err != nil {
+			return nil, err
+		}
+		seen[fm.Folder] = true
+	}
+	var folders []string
+	for f := range seen {
+		folders = append(folders, f)
+	}
+	return folders, nil
+}
+
 func (db *DbFirestore) collectMessages(iter *firestore.DocumentIterator) ([]*model.Message, error) {
 	defer iter.Stop()
 	var messages []*model.Message
@@ -178,3 +419,424 @@ func (db *DbFirestore) collectMessages(iter *firestore.DocumentIterator) ([]*mod
 	return messages, nil
 }
 
+// ---- Alias operations ----
+
+func (db *DbFirestore) CreateAlias(aliasEmail string, targetEmails []string) error {
+	isCatchAll := len(aliasEmail) > 0 && aliasEmail[0] == '@'
+	targetsJSON, _ := json.Marshal(targetEmails)
+	da := docAlias{
+		AliasEmail:   aliasEmail,
+		TargetEmails: string(targetsJSON),
+		IsCatchAll:   isCatchAll,
+	}
+	_, err := db.aliases().Doc(aliasEmail).Set(context.Background(), da)
+	return err
+}
+
+func (db *DbFirestore) GetAlias(aliasEmail string) ([]string, error) {
+	doc, err := db.aliases().Doc(aliasEmail).Get(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("alias not found: %s", aliasEmail)
+	}
+	var da docAlias
+	if err := doc.DataTo(&da); err != nil {
+		return nil, err
+	}
+	var targets []string
+	json.Unmarshal([]byte(da.TargetEmails), &targets)
+	return targets, nil
+}
+
+func (db *DbFirestore) ListAliases() ([]*model.Alias, error) {
+	iter := db.aliases().Documents(context.Background())
+	defer iter.Stop()
+	var aliases []*model.Alias
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		var da docAlias
+		if err := doc.DataTo(&da); err != nil {
+			return nil, err
+		}
+		a := &model.Alias{
+			AliasEmail: da.AliasEmail,
+			IsCatchAll: da.IsCatchAll,
+		}
+		json.Unmarshal([]byte(da.TargetEmails), &a.TargetEmails)
+		aliases = append(aliases, a)
+	}
+	return aliases, nil
+}
+
+func (db *DbFirestore) UpdateAlias(aliasEmail string, targetEmails []string) error {
+	targetsJSON, _ := json.Marshal(targetEmails)
+	_, err := db.aliases().Doc(aliasEmail).Update(context.Background(), []firestore.Update{
+		{Path: "target_emails", Value: string(targetsJSON)},
+	})
+	return err
+}
+
+func (db *DbFirestore) DeleteAlias(aliasEmail string) error {
+	_, err := db.aliases().Doc(aliasEmail).Delete(context.Background())
+	return err
+}
+
+func (db *DbFirestore) GetCatchAll(domain string) ([]string, error) {
+	return db.GetAlias("@" + domain)
+}
+
+// ---- Mailing list operations ----
+
+func (db *DbFirestore) CreateMailingList(listAddr, name, description, ownerEmail string) error {
+	dm := docMailingList{
+		ListAddress: listAddr,
+		Name:        name,
+		Description: description,
+		OwnerEmail:  ownerEmail,
+		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
+	}
+	_, err := db.mailingLists().Doc(listAddr).Set(context.Background(), dm)
+	return err
+}
+
+func (db *DbFirestore) GetMailingList(listAddr string) (*model.MailingList, error) {
+	doc, err := db.mailingLists().Doc(listAddr).Get(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("mailing list not found: %s", listAddr)
+	}
+	var dm docMailingList
+	if err := doc.DataTo(&dm); err != nil {
+		return nil, err
+	}
+	createdAt, _ := time.Parse(time.RFC3339, dm.CreatedAt)
+	return &model.MailingList{
+		ListAddress: dm.ListAddress,
+		Name:        dm.Name,
+		Description: dm.Description,
+		OwnerEmail:  dm.OwnerEmail,
+		CreatedAt:   createdAt,
+	}, nil
+}
+
+func (db *DbFirestore) ListMailingLists() ([]*model.MailingList, error) {
+	iter := db.mailingLists().Documents(context.Background())
+	defer iter.Stop()
+	var lists []*model.MailingList
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		var dm docMailingList
+		if err := doc.DataTo(&dm); err != nil {
+			return nil, err
+		}
+		createdAt, _ := time.Parse(time.RFC3339, dm.CreatedAt)
+		lists = append(lists, &model.MailingList{
+			ListAddress: dm.ListAddress,
+			Name:        dm.Name,
+			Description: dm.Description,
+			OwnerEmail:  dm.OwnerEmail,
+			CreatedAt:   createdAt,
+		})
+	}
+	return lists, nil
+}
+
+func (db *DbFirestore) DeleteMailingList(listAddr string) error {
+	// Delete all members first
+	ctx := context.Background()
+	iter := db.listMembers().
+		Where("list_address", "==", listAddr).
+		Documents(ctx)
+	defer iter.Stop()
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		doc.Ref.Delete(ctx)
+	}
+	// Delete the list itself
+	_, err := db.mailingLists().Doc(listAddr).Delete(ctx)
+	return err
+}
+
+func (db *DbFirestore) AddListMember(listAddr, memberEmail string) error {
+	docID := listAddr + "_" + memberEmail
+	dm := docListMember{
+		ListAddress: listAddr,
+		MemberEmail: memberEmail,
+	}
+	_, err := db.listMembers().Doc(docID).Set(context.Background(), dm)
+	return err
+}
+
+func (db *DbFirestore) RemoveListMember(listAddr, memberEmail string) error {
+	docID := listAddr + "_" + memberEmail
+	_, err := db.listMembers().Doc(docID).Delete(context.Background())
+	return err
+}
+
+func (db *DbFirestore) GetListMembers(listAddr string) ([]string, error) {
+	iter := db.listMembers().
+		Where("list_address", "==", listAddr).
+		Documents(context.Background())
+	defer iter.Stop()
+	var members []string
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		var dm docListMember
+		if err := doc.DataTo(&dm); err != nil {
+			return nil, err
+		}
+		members = append(members, dm.MemberEmail)
+	}
+	return members, nil
+}
+
+func (db *DbFirestore) IsMailingList(email string) bool {
+	_, err := db.mailingLists().Doc(email).Get(context.Background())
+	return err == nil
+}
+
+// ---- Filter operations ----
+
+func (db *DbFirestore) CreateFilter(filter *model.Filter) error {
+	condJSON, _ := json.Marshal(filter.Conditions)
+	actJSON, _ := json.Marshal(filter.Actions)
+	df := docFilter{
+		ID:         filter.ID,
+		UserEmail:  filter.UserEmail,
+		Name:       filter.Name,
+		Priority:   filter.Priority,
+		Conditions: string(condJSON),
+		Actions:    string(actJSON),
+		Enabled:    filter.Enabled,
+	}
+	_, err := db.filters().Doc(filter.ID).Set(context.Background(), df)
+	return err
+}
+
+func (db *DbFirestore) ListFilters(userEmail string) ([]*model.Filter, error) {
+	iter := db.filters().
+		Where("user_email", "==", userEmail).
+		OrderBy("priority", firestore.Desc).
+		Documents(context.Background())
+	defer iter.Stop()
+	var filters []*model.Filter
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		var df docFilter
+		if err := doc.DataTo(&df); err != nil {
+			return nil, err
+		}
+		f := &model.Filter{
+			ID:        df.ID,
+			UserEmail: df.UserEmail,
+			Name:      df.Name,
+			Priority:  df.Priority,
+			Enabled:   df.Enabled,
+		}
+		json.Unmarshal([]byte(df.Conditions), &f.Conditions)
+		json.Unmarshal([]byte(df.Actions), &f.Actions)
+		filters = append(filters, f)
+	}
+	return filters, nil
+}
+
+func (db *DbFirestore) UpdateFilter(filter *model.Filter) error {
+	condJSON, _ := json.Marshal(filter.Conditions)
+	actJSON, _ := json.Marshal(filter.Actions)
+	df := docFilter{
+		ID:         filter.ID,
+		UserEmail:  filter.UserEmail,
+		Name:       filter.Name,
+		Priority:   filter.Priority,
+		Conditions: string(condJSON),
+		Actions:    string(actJSON),
+		Enabled:    filter.Enabled,
+	}
+	_, err := db.filters().Doc(filter.ID).Set(context.Background(), df)
+	return err
+}
+
+func (db *DbFirestore) DeleteFilter(id string) error {
+	_, err := db.filters().Doc(id).Delete(context.Background())
+	return err
+}
+
+// ---- Auto-reply operations ----
+
+func (db *DbFirestore) SetAutoReply(reply *model.AutoReply) error {
+	da := docAutoReply{
+		UserEmail: reply.UserEmail,
+		Enabled:   reply.Enabled,
+		Subject:   reply.Subject,
+		Body:      reply.Body,
+		StartDate: reply.StartDate.UTC().Format(time.RFC3339),
+		EndDate:   reply.EndDate.UTC().Format(time.RFC3339),
+	}
+	_, err := db.autoReplies().Doc(reply.UserEmail).Set(context.Background(), da)
+	return err
+}
+
+func (db *DbFirestore) GetAutoReply(userEmail string) (*model.AutoReply, error) {
+	doc, err := db.autoReplies().Doc(userEmail).Get(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("auto-reply not found: %s", userEmail)
+	}
+	var da docAutoReply
+	if err := doc.DataTo(&da); err != nil {
+		return nil, err
+	}
+	startDate, _ := time.Parse(time.RFC3339, da.StartDate)
+	endDate, _ := time.Parse(time.RFC3339, da.EndDate)
+	return &model.AutoReply{
+		UserEmail: da.UserEmail,
+		Enabled:   da.Enabled,
+		Subject:   da.Subject,
+		Body:      da.Body,
+		StartDate: startDate,
+		EndDate:   endDate,
+	}, nil
+}
+
+func (db *DbFirestore) DeleteAutoReply(userEmail string) error {
+	_, err := db.autoReplies().Doc(userEmail).Delete(context.Background())
+	return err
+}
+
+func (db *DbFirestore) RecordAutoReplySent(userEmail, senderEmail string) error {
+	docID := userEmail + "_" + senderEmail
+	dl := docAutoReplyLog{
+		UserEmail:   userEmail,
+		SenderEmail: senderEmail,
+		SentAt:      time.Now().UTC().Format(time.RFC3339),
+	}
+	_, err := db.autoReplyLog().Doc(docID).Set(context.Background(), dl)
+	return err
+}
+
+func (db *DbFirestore) HasAutoRepliedRecently(userEmail, senderEmail string, cooldown time.Duration) bool {
+	docID := userEmail + "_" + senderEmail
+	doc, err := db.autoReplyLog().Doc(docID).Get(context.Background())
+	if err != nil {
+		return false
+	}
+	var dl docAutoReplyLog
+	if err := doc.DataTo(&dl); err != nil {
+		return false
+	}
+	sentAt, err := time.Parse(time.RFC3339, dl.SentAt)
+	if err != nil {
+		return false
+	}
+	return time.Since(sentAt) < cooldown
+}
+
+// ---- Contact operations ----
+
+func (db *DbFirestore) CreateContact(contact *model.Contact) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	dc := docContact{
+		ID:         contact.ID,
+		OwnerEmail: contact.OwnerEmail,
+		VCardData:  contact.VCardData,
+		ETag:       contact.ETag,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	_, err := db.contacts().Doc(contact.ID).Set(context.Background(), dc)
+	return err
+}
+
+func (db *DbFirestore) GetContact(id string) (*model.Contact, error) {
+	doc, err := db.contacts().Doc(id).Get(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("contact not found: %s", id)
+	}
+	var dc docContact
+	if err := doc.DataTo(&dc); err != nil {
+		return nil, err
+	}
+	createdAt, _ := time.Parse(time.RFC3339, dc.CreatedAt)
+	updatedAt, _ := time.Parse(time.RFC3339, dc.UpdatedAt)
+	return &model.Contact{
+		ID:         dc.ID,
+		OwnerEmail: dc.OwnerEmail,
+		VCardData:  dc.VCardData,
+		ETag:       dc.ETag,
+		CreatedAt:  createdAt,
+		UpdatedAt:  updatedAt,
+	}, nil
+}
+
+func (db *DbFirestore) ListContacts(ownerEmail string) ([]*model.Contact, error) {
+	iter := db.contacts().
+		Where("owner_email", "==", ownerEmail).
+		Documents(context.Background())
+	defer iter.Stop()
+	var contacts []*model.Contact
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		var dc docContact
+		if err := doc.DataTo(&dc); err != nil {
+			return nil, err
+		}
+		createdAt, _ := time.Parse(time.RFC3339, dc.CreatedAt)
+		updatedAt, _ := time.Parse(time.RFC3339, dc.UpdatedAt)
+		contacts = append(contacts, &model.Contact{
+			ID:         dc.ID,
+			OwnerEmail: dc.OwnerEmail,
+			VCardData:  dc.VCardData,
+			ETag:       dc.ETag,
+			CreatedAt:  createdAt,
+			UpdatedAt:  updatedAt,
+		})
+	}
+	return contacts, nil
+}
+
+func (db *DbFirestore) UpdateContact(contact *model.Contact) error {
+	_, err := db.contacts().Doc(contact.ID).Update(context.Background(), []firestore.Update{
+		{Path: "vcard_data", Value: contact.VCardData},
+		{Path: "etag", Value: contact.ETag},
+		{Path: "updated_at", Value: time.Now().UTC().Format(time.RFC3339)},
+	})
+	return err
+}
+
+func (db *DbFirestore) DeleteContact(id string) error {
+	_, err := db.contacts().Doc(id).Delete(context.Background())
+	return err
+}

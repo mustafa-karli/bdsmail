@@ -25,6 +25,15 @@ A multi-domain mail server written in Go. Single binary, zero required external 
 - **TLSRPT (RFC 8460)**: Sends daily TLS connection failure reports to receiving domains
 - **REQUIRETLS (RFC 8689)**: Supports the REQUIRETLS SMTP extension for end-to-end TLS enforcement
 - **Rate limiting**: Per-IP connection rate limiting and brute-force login protection with automatic lockout
+- **Email aliases**: Forward mail to one or more targets, with domain-level catch-all support (`@domain.com`)
+- **Mailing lists**: Group distribution lists with List-Id/List-Unsubscribe headers and web admin management
+- **Server-side filtering**: Sieve-style rules with conditions (from, to, subject, headers) and actions (move, mark read, delete, flag)
+- **Default filter presets**: Auto-created filters for newsletters, social media, noreply senders, and large attachments
+- **Auto-reply / Vacation**: Configurable out-of-office responses with date ranges and 24-hour per-sender cooldown
+- **Full-text search**: Search across subject, body, from, and to fields (SQLite FTS5, PostgreSQL ILIKE, client-side for NoSQL)
+- **Contacts / CardDAV**: Contact management via web UI and CardDAV protocol (compatible with macOS Contacts, DAVx5, etc.)
+- **Web admin panel**: Manage domains, users, aliases, and mailing lists via the admin web UI
+- **Dynamic folders**: Custom mail folders created by filters, visible in IMAP and web UI
 - **Multiple database backends**: PostgreSQL, SQLite, DynamoDB, or Firestore
 - **Multiple object stores**: GCS or S3 for attachments (configurable)
 
@@ -44,9 +53,14 @@ graph TD
 
     RateLimit --> Security["Security Checks<br/>(ClamAV, Rspamd,<br/>Safe Browsing,<br/>SPF/DKIM/DMARC)"]
 
-    Security --> Store["Store<br/>(facade)"]
+    Security --> Filters["Mail Processing<br/>(Aliases, Mailing Lists,<br/>Sieve Filters, Auto-Reply)"]
+
+    Filters --> Store["Store<br/>(facade)"]
     POP3 --> Store
     IMAP --> Store
+
+    Internet --> CardDAV["CardDAV :443<br/>(contacts)"]
+    CardDAV --> Store
 
     Store --> PostgreSQL[(PostgreSQL<br/>metadata)]
     Store --> GCS[(GCS Bucket<br/>mail bodies)]
@@ -844,6 +858,107 @@ DKIM Sign → MTA-STS Policy Check → DANE/TLSA Verification → STARTTLS (enfo
     ↓
 Deliver via relay or direct MX
 ```
+
+---
+
+## Email Aliases
+
+Aliases forward mail from one address to one or more targets. Managed via the admin web UI at `/admin/aliases`.
+
+- **Standard alias**: `sales@domain.com` → `alice@domain.com, bob@domain.com`
+- **Catch-all**: `@domain.com` → `admin@domain.com` (catches all undelivered mail for the domain)
+
+Aliases are resolved recursively (max depth 10) during inbound SMTP delivery.
+
+---
+
+## Mailing Lists
+
+Group distribution lists managed via `/admin/lists`. When mail is sent to a list address:
+
+- The message is delivered to all list members' INBOX
+- Subject is prefixed with `[ListName]`
+- `List-Id` and `List-Unsubscribe` headers are added
+- The sender does not receive their own copy
+
+---
+
+## Mail Filters
+
+Server-side filtering rules at `/filters`. Each filter has:
+- **Conditions**: field (from/to/subject/header), operator (contains/equals/exists), value
+- **Actions**: move to folder, mark as read, delete, flag
+
+### Default Presets
+
+Four filters are available by default:
+1. **Newsletters**: Messages with `List-Unsubscribe` header → "Newsletters" folder
+2. **Social**: Messages from facebook/twitter/linkedin/instagram → "Social" folder
+3. **Auto-read noreply**: Messages from noreply/no-reply addresses → mark as read
+4. **Large attachments**: Attachments > 5MB → flag
+
+Custom folders created by filter rules appear automatically in the IMAP folder list and web UI.
+
+---
+
+## Auto-Reply / Vacation
+
+Configure at `/settings/autoreply`:
+- Enable/disable auto-reply
+- Custom subject and body
+- Optional start and end dates
+
+**Loop prevention**: Auto-replies are NOT sent to:
+- `noreply`, `no-reply`, `mailer-daemon` addresses
+- Messages with `List-Unsubscribe` or `Auto-Submitted` headers
+- Senders already replied to within the last 24 hours
+
+---
+
+## Full-Text Search
+
+Search across subject, body, from, and to fields:
+- **Web UI**: Search bar in the inbox toolbar
+- **IMAP**: `SEARCH TEXT "query"` command
+- **SQLite**: Uses LIKE matching
+- **PostgreSQL**: Uses ILIKE matching
+- **DynamoDB/Firestore**: Client-side filtering
+
+---
+
+## Contacts / CardDAV
+
+### Web UI
+
+Manage contacts at `/contacts` — add, view, and delete contacts with name, email, and phone.
+
+### CardDAV Protocol
+
+Compatible with standard CardDAV clients (macOS Contacts, DAVx5, Thunderbird CardBook, etc.):
+
+| Setting | Value |
+|---------|-------|
+| Server URL | `https://mail.yourdomain.com/carddav/user@domain.com/default/` |
+| Username | Full email: `user@domain.com` |
+| Password | Account password |
+| Auth | HTTP Basic Auth (over HTTPS) |
+
+Auto-discovery: `/.well-known/carddav` redirects to `/carddav/`.
+
+---
+
+## Admin Panel
+
+The admin panel provides web-based management for:
+
+| Page | URL | Description |
+|------|-----|-------------|
+| Domains | `/admin/domains` | Add/manage domains, view DNS records |
+| Users | `/admin/users` | Create, list, delete users |
+| Aliases | `/admin/aliases` | Create/delete email aliases and catch-alls |
+| Mailing Lists | `/admin/lists` | Create lists, manage members |
+
+All admin pages require the `BDS_ADMIN_SECRET` for authentication.
 
 ---
 

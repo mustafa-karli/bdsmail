@@ -1,0 +1,37 @@
+{{define "title-autoreply"}}Auto-Reply Settings{{end}}
+{{define "content-autoreply"}}
+<div class="card">
+    <div class="toolbar">
+        <h2>Auto-Reply / Vacation</h2>
+        <a href="/inbox" class="btn btn-sm btn-secondary">Back to Inbox</a>
+    </div>
+
+    {{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+    {{if .Success}}<div class="alert alert-success">{{.Success}}</div>{{end}}
+
+    <form method="POST" action="/settings/autoreply" style="margin-top:16px;">
+        <div class="form-group">
+            <label><input type="checkbox" name="enabled" value="true" {{if .AutoReply.Enabled}}checked{{end}}> Enable Auto-Reply</label>
+        </div>
+        <div class="form-group">
+            <label for="subject">Subject</label>
+            <input type="text" id="subject" name="subject" value="{{.AutoReply.Subject}}" placeholder="Out of Office">
+        </div>
+        <div class="form-group">
+            <label for="body">Message Body</label>
+            <textarea id="body" name="body" rows="6" placeholder="I am currently out of the office...">{{.AutoReply.Body}}</textarea>
+        </div>
+        <div style="display:flex; gap:16px;">
+            <div class="form-group" style="flex:1;">
+                <label for="start_date">Start Date (optional)</label>
+                <input type="date" id="start_date" name="start_date" value="{{if not .AutoReply.StartDate.IsZero}}{{.AutoReply.StartDate.Format "2006-01-02"}}{{end}}">
+            </div>
+            <div class="form-group" style="flex:1;">
+                <label for="end_date">End Date (optional)</label>
+                <input type="date" id="end_date" name="end_date" value="{{if not .AutoReply.EndDate.IsZero}}{{.AutoReply.EndDate.Format "2006-01-02"}}{{end}}">
+            </div>
+        </div>
+        <button type="submit" class="btn">Save Settings</button>
+    </form>
+</div>
+{{end}}

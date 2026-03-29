@@ -54,6 +54,11 @@ func (r *Relay) AddDKIMKey(domain string, key crypto.Signer) {
 	r.mu.Unlock()
 }
 
+// SendSimple sends a message without any options (used by auto-reply).
+func (r *Relay) SendSimple(from string, to []string, subject, contentType, body string) error {
+	return r.Send(from, to, subject, contentType, body, "")
+}
+
 func (r *Relay) Send(from string, to []string, subject, contentType, body, messageID string, opts ...SendOption) error {
 	var sendOpts sendOptions
 	for _, o := range opts {

@@ -1,0 +1,67 @@
+{{define "title-admin_aliases"}}Admin - Aliases{{end}}
+{{define "content-admin_aliases"}}
+{{if not .Email}}
+<div class="login-container">
+    <div class="card">
+        <h2>Admin Access</h2>
+        <form method="POST" action="/admin/aliases">
+            <input type="hidden" name="admin_action" value="login">
+            <div class="form-group">
+                <label for="admin_secret">Admin Secret</label>
+                <input type="password" id="admin_secret" name="admin_secret" required autofocus>
+            </div>
+            <button type="submit" class="btn" style="width:100%;">Sign In</button>
+        </form>
+    </div>
+</div>
+{{else}}
+{{$data := .Message}}
+<div class="card">
+    <div class="toolbar">
+        <h2>Email Aliases</h2>
+        <div>
+            <a href="/admin/domains" class="btn btn-sm btn-secondary">Domains</a>
+            <a href="/admin/users" class="btn btn-sm btn-secondary">Users</a>
+            <a href="/admin/lists" class="btn btn-sm btn-secondary">Lists</a>
+            <form action="/admin/logout" method="POST" style="display:inline;">
+                <button type="submit" class="btn btn-sm btn-secondary">Logout</button>
+            </form>
+        </div>
+    </div>
+
+    {{if $data.Error}}<div class="alert alert-error">{{$data.Error}}</div>{{end}}
+    {{if $data.Success}}<div class="alert alert-success">{{$data.Success}}</div>{{end}}
+
+    <form method="POST" action="/admin/aliases" style="margin-top:16px;">
+        <input type="hidden" name="admin_action" value="create_alias">
+        <h3 style="color:#1976D2; margin-bottom:12px;">Create Alias</h3>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:end;">
+            <div style="flex:1;"><label>Alias Address</label><input type="text" name="alias_email" placeholder="alias@domain.com or @domain.com" required></div>
+            <div style="flex:2;"><label>Target Emails (comma-separated)</label><input type="text" name="target_emails" placeholder="user1@domain.com, user2@domain.com" required></div>
+            <button type="submit" class="btn" style="height:42px;">Create</button>
+        </div>
+    </form>
+
+    <h3 style="color:#1976D2; margin-top:24px; margin-bottom:12px;">Aliases ({{len $data.Aliases}})</h3>
+    <table class="message-list">
+        <thead><tr><th>Alias</th><th>Targets</th><th>Type</th><th>Actions</th></tr></thead>
+        <tbody>
+            {{range $data.Aliases}}
+            <tr>
+                <td>{{.AliasEmail}}</td>
+                <td>{{joinAddrs .TargetEmails}}</td>
+                <td>{{if .IsCatchAll}}Catch-All{{else}}Alias{{end}}</td>
+                <td>
+                    <form method="POST" action="/admin/aliases" style="display:inline;">
+                        <input type="hidden" name="admin_action" value="delete_alias">
+                        <input type="hidden" name="alias_email" value="{{.AliasEmail}}">
+                        <button type="submit" class="btn btn-sm btn-secondary">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+</div>
+{{end}}
+{{end}}

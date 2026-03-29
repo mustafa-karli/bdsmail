@@ -1,0 +1,66 @@
+{{define "title-filters"}}Filters{{end}}
+{{define "content-filters"}}
+<div class="card">
+    <div class="toolbar">
+        <h2>Mail Filters</h2>
+        <a href="/inbox" class="btn btn-sm btn-secondary">Back to Inbox</a>
+    </div>
+
+    {{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+    {{if .Success}}<div class="alert alert-success">{{.Success}}</div>{{end}}
+
+    <form method="POST" action="/filters" style="margin-top:16px;">
+        <input type="hidden" name="action" value="create">
+        <h3 style="color:#1976D2; margin-bottom:12px;">New Filter</h3>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:end;">
+            <div><label>Name</label><input type="text" name="name" placeholder="Filter name" required></div>
+            <div><label>Field</label>
+                <select name="field">
+                    <option value="from">From</option>
+                    <option value="to">To</option>
+                    <option value="subject">Subject</option>
+                </select>
+            </div>
+            <div><label>Operator</label>
+                <select name="operator">
+                    <option value="contains">Contains</option>
+                    <option value="equals">Equals</option>
+                    <option value="not_contains">Not Contains</option>
+                </select>
+            </div>
+            <div style="flex:1;"><label>Value</label><input type="text" name="value" placeholder="match text" required></div>
+            <div><label>Action</label>
+                <select name="action_type">
+                    <option value="move">Move to folder</option>
+                    <option value="mark_read">Mark as read</option>
+                    <option value="delete">Delete</option>
+                    <option value="flag">Flag</option>
+                </select>
+            </div>
+            <div><label>Action Value</label><input type="text" name="action_value" placeholder="folder name"></div>
+            <button type="submit" class="btn" style="height:42px;">Create</button>
+        </div>
+    </form>
+
+    <h3 style="color:#1976D2; margin-top:24px; margin-bottom:12px;">Active Filters</h3>
+    <table class="message-list">
+        <thead><tr><th>Name</th><th>Priority</th><th>Enabled</th><th>Actions</th></tr></thead>
+        <tbody>
+            {{range .Filters}}
+            <tr>
+                <td>{{.Name}}</td>
+                <td>{{.Priority}}</td>
+                <td>{{if .Enabled}}Yes{{else}}No{{end}}</td>
+                <td>
+                    <form method="POST" action="/filters" style="display:inline;">
+                        <input type="hidden" name="action" value="delete">
+                        <input type="hidden" name="filter_id" value="{{.ID}}">
+                        <button type="submit" class="btn btn-sm btn-secondary">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+</div>
+{{end}}

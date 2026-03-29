@@ -8,7 +8,9 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/mustafakarli/bdsmail/config"
 	"github.com/mustafakarli/bdsmail/internal/mimeutil"
 	"github.com/mustafakarli/bdsmail/internal/model"
@@ -37,6 +39,7 @@ type pageData struct {
 	Error           string
 	Success         string
 	Folder          string
+	Folders         []string    // all user folders for nav tabs
 	Messages        interface{}
 	Message         interface{}
 	FormTo          string
@@ -45,6 +48,17 @@ type pageData struct {
 	FormSubject     string
 	FormBody        string
 	FormContentType string
+	SearchQuery     string
+	Filters         interface{}
+	AutoReply       *model.AutoReply
+	Contacts        []contactView
+}
+
+type contactView struct {
+	ID    string
+	Name  string
+	Email string
+	Phone string
 }
 
 func (h *Handlers) getDomain(r *http.Request) string {
@@ -159,6 +173,8 @@ func (h *Handlers) HandleInbox(w http.ResponseWriter, r *http.Request, tmpl temp
 
 	pd.Folder = "INBOX"
 	pd.Messages = messages
+	folders, _ := h.store.DB.ListUserFolders(email)
+	pd.Folders = folders
 	tmpl.render(w, "layout", pd)
 }
 
@@ -179,6 +195,8 @@ func (h *Handlers) HandleSent(w http.ResponseWriter, r *http.Request, tmpl templ
 
 	pd.Folder = "Sent"
 	pd.Messages = messages
+	folders, _ := h.store.DB.ListUserFolders(email)
+	pd.Folders = folders
 	tmpl.render(w, "layout", pd)
 }
 
@@ -422,6 +440,222 @@ func (h *Handlers) HandleAttachment(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", found.Filename))
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
 	w.Write(data)
+}
+
+// --- Filters ---
+
+func (h *Handlers) HandleFilters(w http.ResponseWriter, r *http.Request, tmpl templateRenderer) {
+	email, ok := h.requireAuth(w, r)
+	if !ok {
+		return
+	}
+	pd := h.userPageData(email)
+
+	if r.Method == http.MethodPost {
+		action := r.FormValue("action")
+		switch action {
+		case "create":
+			f := &model.Filter{
+				ID:        uuid.New().String(),
+				UserEmail: email,
+				Name:      r.FormValue("name"),
+				Priority:  5,
+				Conditions: []model.FilterCondition{
+					{Field: r.FormValue("field"), Operator: r.FormValue("operator"), Value: r.FormValue("value")},
+				},
+				Actions: []model.FilterAction{
+					{Type: r.FormValue("action_type"), Value: r.FormValue("action_value")},
+				},
+				Enabled: true,
+			}
+			if err := h.store.DB.CreateFilter(f); err != nil {
+				pd.Error = "Failed to create filter: " + err.Error()
+			} else {
+				pd.Success = "Filter created"
+			}
+		case "delete":
+			if err := h.store.DB.DeleteFilter(r.FormValue("filter_id")); err != nil {
+				pd.Error = "Failed to delete filter"
+			} else {
+				pd.Success = "Filter deleted"
+			}
+		}
+	}
+
+	filters, _ := h.store.DB.ListFilters(email)
+	pd.Filters = filters
+	tmpl.render(w, "layout", pd)
+}
+
+// --- Auto-Reply ---
+
+func (h *Handlers) HandleAutoReply(w http.ResponseWriter, r *http.Request, tmpl templateRenderer) {
+	email, ok := h.requireAuth(w, r)
+	if !ok {
+		return
+	}
+	pd := h.userPageData(email)
+
+	if r.Method == http.MethodPost {
+		reply := &model.AutoReply{
+			UserEmail: email,
+			Enabled:   r.FormValue("enabled") == "true",
+			Subject:   r.FormValue("subject"),
+			Body:      r.FormValue("body"),
+		}
+		if sd := r.FormValue("start_date"); sd != "" {
+			reply.StartDate, _ = time.Parse("2006-01-02", sd)
+		}
+		if ed := r.FormValue("end_date"); ed != "" {
+			reply.EndDate, _ = time.Parse("2006-01-02", ed)
+		}
+		if err := h.store.DB.SetAutoReply(reply); err != nil {
+			pd.Error = "Failed to save: " + err.Error()
+		} else {
+			pd.Success = "Auto-reply settings saved"
+		}
+	}
+
+	reply, err := h.store.DB.GetAutoReply(email)
+	if err != nil {
+		reply = &model.AutoReply{UserEmail: email}
+	}
+	pd.AutoReply = reply
+	tmpl.render(w, "layout", pd)
+}
+
+// --- Contacts ---
+
+func (h *Handlers) HandleContacts(w http.ResponseWriter, r *http.Request, tmpl templateRenderer) {
+	email, ok := h.requireAuth(w, r)
+	if !ok {
+		return
+	}
+	pd := h.userPageData(email)
+
+	if r.Method == http.MethodPost {
+		action := r.FormValue("action")
+		switch action {
+		case "create":
+			name := r.FormValue("name")
+			contactEmail := r.FormValue("contact_email")
+			phone := r.FormValue("phone")
+			vcard := contactToVCard(name, contactEmail, phone)
+			c := &model.Contact{
+				ID:         uuid.New().String(),
+				OwnerEmail: email,
+				VCardData:  vcard,
+				ETag:       uuid.New().String()[:8],
+			}
+			if err := h.store.DB.CreateContact(c); err != nil {
+				pd.Error = "Failed to add contact"
+			} else {
+				pd.Success = "Contact added"
+			}
+		case "delete":
+			if err := h.store.DB.DeleteContact(r.FormValue("contact_id")); err != nil {
+				pd.Error = "Failed to delete contact"
+			} else {
+				pd.Success = "Contact deleted"
+			}
+		}
+	}
+
+	contacts, _ := h.store.DB.ListContacts(email)
+	var views []contactView
+	for _, c := range contacts {
+		name, cemail, phone := vcardToContact(c.VCardData)
+		views = append(views, contactView{ID: c.ID, Name: name, Email: cemail, Phone: phone})
+	}
+	pd.Contacts = views
+	tmpl.render(w, "layout", pd)
+}
+
+// --- Search ---
+
+func (h *Handlers) HandleSearch(w http.ResponseWriter, r *http.Request, tmpl templateRenderer) {
+	email, ok := h.requireAuth(w, r)
+	if !ok {
+		return
+	}
+	pd := h.userPageData(email)
+
+	query := r.URL.Query().Get("q")
+	pd.SearchQuery = query
+
+	if query != "" {
+		messages, err := h.store.DB.SearchMessages(email, query)
+		if err != nil {
+			pd.Error = "Search failed"
+		}
+		pd.Messages = messages
+	}
+
+	pd.Folder = "Search"
+	tmpl.render(w, "layout", pd)
+}
+
+// --- Folder view ---
+
+func (h *Handlers) HandleFolder(w http.ResponseWriter, r *http.Request, tmpl templateRenderer) {
+	email, ok := h.requireAuth(w, r)
+	if !ok {
+		return
+	}
+	pd := h.userPageData(email)
+
+	folder := strings.TrimPrefix(r.URL.Path, "/folder/")
+	if folder == "" {
+		folder = "INBOX"
+	}
+
+	messages, err := h.store.DB.ListMessages(email, folder)
+	if err != nil {
+		log.Printf("error listing messages for folder %s: %v", folder, err)
+	}
+
+	pd.Folder = folder
+	folders, _ := h.store.DB.ListUserFolders(email)
+	pd.Folders = folders
+	pd.Messages = messages
+	tmpl.render(w, "layout", pd)
+}
+
+// --- vCard helpers ---
+
+func contactToVCard(name, email, phone string) string {
+	var b strings.Builder
+	b.WriteString("BEGIN:VCARD\r\nVERSION:3.0\r\n")
+	b.WriteString("FN:" + name + "\r\n")
+	if email != "" {
+		b.WriteString("EMAIL:" + email + "\r\n")
+	}
+	if phone != "" {
+		b.WriteString("TEL:" + phone + "\r\n")
+	}
+	b.WriteString("END:VCARD\r\n")
+	return b.String()
+}
+
+func vcardToContact(vcard string) (name, email, phone string) {
+	for _, line := range strings.Split(vcard, "\r\n") {
+		if line == "" {
+			continue
+		}
+		// Handle lines without parameters
+		if strings.HasPrefix(line, "FN:") {
+			name = strings.TrimPrefix(line, "FN:")
+		} else if strings.HasPrefix(line, "EMAIL") {
+			if idx := strings.Index(line, ":"); idx >= 0 {
+				email = line[idx+1:]
+			}
+		} else if strings.HasPrefix(line, "TEL") {
+			if idx := strings.Index(line, ":"); idx >= 0 {
+				phone = line[idx+1:]
+			}
+		}
+	}
+	return
 }
 
 // helpers

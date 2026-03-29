@@ -5,8 +5,17 @@
         <div class="folder-tabs">
             <a href="/inbox" class="{{if eq .Folder "INBOX"}}active{{end}}">Inbox</a>
             <a href="/sent" class="{{if eq .Folder "Sent"}}active{{end}}">Sent</a>
+            {{range .Folders}}{{if and (ne . "INBOX") (ne . "Sent")}}
+            <a href="/folder/{{.}}" class="{{if eq . $.Folder}}active{{end}}">{{.}}</a>
+            {{end}}{{end}}
         </div>
-        <a href="/compose" class="btn btn-sm">Compose</a>
+        <div style="display:flex; gap:8px;">
+            <form action="/search" method="GET" style="display:flex; gap:4px;">
+                <input type="text" name="q" placeholder="Search..." value="{{.SearchQuery}}" style="width:150px; padding:4px 8px; font-size:0.9em;">
+                <button type="submit" class="btn btn-sm btn-secondary">Search</button>
+            </form>
+            <a href="/compose" class="btn btn-sm">Compose</a>
+        </div>
     </div>
     {{if .Messages}}
     <table class="message-list">

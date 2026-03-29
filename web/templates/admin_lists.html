@@ -1,0 +1,70 @@
+{{define "title-admin_lists"}}Admin - Mailing Lists{{end}}
+{{define "content-admin_lists"}}
+{{if not .Email}}
+<div class="login-container">
+    <div class="card">
+        <h2>Admin Access</h2>
+        <form method="POST" action="/admin/lists">
+            <input type="hidden" name="admin_action" value="login">
+            <div class="form-group">
+                <label for="admin_secret">Admin Secret</label>
+                <input type="password" id="admin_secret" name="admin_secret" required autofocus>
+            </div>
+            <button type="submit" class="btn" style="width:100%;">Sign In</button>
+        </form>
+    </div>
+</div>
+{{else}}
+{{$data := .Message}}
+<div class="card">
+    <div class="toolbar">
+        <h2>Mailing Lists</h2>
+        <div>
+            <a href="/admin/domains" class="btn btn-sm btn-secondary">Domains</a>
+            <a href="/admin/users" class="btn btn-sm btn-secondary">Users</a>
+            <a href="/admin/aliases" class="btn btn-sm btn-secondary">Aliases</a>
+            <form action="/admin/logout" method="POST" style="display:inline;">
+                <button type="submit" class="btn btn-sm btn-secondary">Logout</button>
+            </form>
+        </div>
+    </div>
+
+    {{if $data.Error}}<div class="alert alert-error">{{$data.Error}}</div>{{end}}
+    {{if $data.Success}}<div class="alert alert-success">{{$data.Success}}</div>{{end}}
+
+    <form method="POST" action="/admin/lists" style="margin-top:16px;">
+        <input type="hidden" name="admin_action" value="create_list">
+        <h3 style="color:#1976D2; margin-bottom:12px;">Create List</h3>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:end;">
+            <div><label>List Address</label><input type="email" name="list_address" placeholder="team@domain.com" required></div>
+            <div><label>Name</label><input type="text" name="name" placeholder="Team List" required></div>
+            <div><label>Owner</label><input type="email" name="owner_email" placeholder="admin@domain.com" required></div>
+            <button type="submit" class="btn" style="height:42px;">Create</button>
+        </div>
+    </form>
+
+    <h3 style="color:#1976D2; margin-top:24px; margin-bottom:12px;">Lists ({{len $data.Lists}})</h3>
+    {{range $data.Lists}}
+    <div class="card" style="margin-bottom:12px; background:#f5faff;">
+        <div class="toolbar">
+            <h4>{{.Name}} ({{.ListAddress}})</h4>
+            <form method="POST" action="/admin/lists" style="display:inline;">
+                <input type="hidden" name="admin_action" value="delete_list">
+                <input type="hidden" name="list_address" value="{{.ListAddress}}">
+                <button type="submit" class="btn btn-sm btn-secondary" onclick="return confirm('Delete list {{.ListAddress}}?')">Delete</button>
+            </form>
+        </div>
+        <p style="color:#666; font-size:0.9em;">Owner: {{.OwnerEmail}}</p>
+        <form method="POST" action="/admin/lists" style="margin-top:8px;">
+            <input type="hidden" name="admin_action" value="add_member">
+            <input type="hidden" name="list_address" value="{{.ListAddress}}">
+            <div style="display:flex; gap:8px; align-items:end;">
+                <div style="flex:1;"><input type="email" name="member_email" placeholder="member@domain.com" required></div>
+                <button type="submit" class="btn btn-sm">Add Member</button>
+            </div>
+        </form>
+    </div>
+    {{end}}
+</div>
+{{end}}
+{{end}}
