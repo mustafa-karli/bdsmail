@@ -1,6 +1,6 @@
 # BDS Mail
 
-A multi-domain mail server written in Go. Supports SMTP, POP3, IMAP, and a web interface. Stores mail bodies in Google Cloud Storage and metadata in PostgreSQL. Includes DKIM signing for email deliverability and automated TLS certificate management.
+A multi-domain mail server written in Go. Single binary, zero required external dependencies. Supports SMTP, POP3, IMAP, and a web interface with pluggable cloud-native storage backends. Includes comprehensive email security: DKIM signing, SPF/DKIM/DMARC verification, MTA-STS, DANE/TLSA, TLSRPT, REQUIRETLS, ClamAV antivirus, Rspamd spam filtering, Google Safe Browsing, rate limiting, and automated TLS certificate management.
 
 ## Features
 
@@ -17,8 +17,14 @@ A multi-domain mail server written in Go. Supports SMTP, POP3, IMAP, and a web i
 - **Admin interface**: Web UI at `/admin/domains` for managing domains
 - **Attachments**: Send and receive file attachments (MIME multipart), stored in GCS or S3
 - **Virus scanning**: Optional ClamAV integration blocks infected emails and attachments (inbound and outbound)
+- **Spam filtering**: Rspamd integration via HTTP API with configurable score thresholds for reject/junk
 - **Dangerous link detection**: Google Safe Browsing API flags or blocks emails with malicious URLs
 - **Sender verification**: Inbound SPF/DKIM/DMARC checks with policy-based reject or quarantine
+- **MTA-STS (RFC 8461)**: Enforces TLS for outbound delivery to domains with MTA-STS policies
+- **DANE/TLSA (RFC 6698/7672)**: Verifies recipient server certificates against DNSSEC TLSA records
+- **TLSRPT (RFC 8460)**: Sends daily TLS connection failure reports to receiving domains
+- **REQUIRETLS (RFC 8689)**: Supports the REQUIRETLS SMTP extension for end-to-end TLS enforcement
+- **Rate limiting**: Per-IP connection rate limiting and brute-force login protection with automatic lockout
 - **Multiple database backends**: PostgreSQL, SQLite, DynamoDB, or Firestore
 - **Multiple object stores**: GCS or S3 for attachments (configurable)
 
@@ -33,8 +39,10 @@ graph TD
     Internet --> IMAP["IMAP :143<br/>(mail clients)"]
     Internet --> HTTPS["HTTPS :443<br/>(web UI)"]
 
-    SMTP --> Security["Security Checks<br/>(ClamAV, Safe Browsing,<br/>SPF/DKIM/DMARC)"]
-    HTTPS --> Security
+    SMTP --> RateLimit["Rate Limiter<br/>(per-IP conn limit,<br/>brute-force protection)"]
+    HTTPS --> RateLimit
+
+    RateLimit --> Security["Security Checks<br/>(ClamAV, Rspamd,<br/>Safe Browsing,<br/>SPF/DKIM/DMARC)"]
 
     Security --> Store["Store<br/>(facade)"]
     POP3 --> Store
@@ -43,8 +51,9 @@ graph TD
     Store --> PostgreSQL[(PostgreSQL<br/>metadata)]
     Store --> GCS[(GCS Bucket<br/>mail bodies)]
 
-    SMTP -->|outbound| SES["Amazon SES<br/>(SMTP relay :587)"]
-    HTTPS -->|outbound| SES
+    SMTP -->|outbound| TLS["Transport Security<br/>(MTA-STS, DANE/TLSA,<br/>REQUIRETLS, TLSRPT)"]
+    HTTPS -->|outbound| TLS
+    TLS --> SES["SMTP Relay :587<br/>(SES/SendGrid/Mailgun<br/>or direct MX)"]
     SES --> Internet
 ```
 
@@ -553,8 +562,25 @@ All configuration is via environment variables:
 | `BDS_SAFEBROWSING_ENABLED` | Enable Google Safe Browsing link checks | `false` |
 | `BDS_SAFEBROWSING_API_KEY` | Google Safe Browsing API key | (none) |
 | `BDS_SAFEBROWSING_TIMEOUT` | Safe Browsing API timeout (seconds) | `5` |
-| `BDS_AUTH_CHECK_ENABLED` | Enable inbound SPF/DKIM/DMARC verification | `false` |
+| `BDS_AUTH_CHECK_ENABLED` | Enable inbound SPF/DKIM/DMARC verification | `true` |
 | `BDS_AUTH_CHECK_TIMEOUT` | Auth verification timeout (seconds) | `5` |
+| `BDS_RATELIMIT_ENABLED` | Enable per-IP rate limiting and brute-force protection | `true` |
+| `BDS_RATELIMIT_CONN_PER_SEC` | Max connections per second per IP | `10` |
+| `BDS_RATELIMIT_CONN_BURST` | Connection burst allowance per IP | `20` |
+| `BDS_RATELIMIT_MAX_AUTH_FAIL` | Failed auth attempts before lockout | `5` |
+| `BDS_RATELIMIT_LOCKOUT_SEC` | Lockout duration in seconds | `900` |
+| `BDS_RSPAMD_ENABLED` | Enable Rspamd spam filtering | `true` |
+| `BDS_RSPAMD_URL` | Rspamd HTTP API URL | `http://localhost:11333` |
+| `BDS_RSPAMD_TIMEOUT` | Rspamd scan timeout (seconds) | `10` |
+| `BDS_RSPAMD_REJECT_SCORE` | Spam score threshold for rejection | `15.0` |
+| `BDS_RSPAMD_JUNK_SCORE` | Spam score threshold for Junk folder | `6.0` |
+| `BDS_MTASTS_ENABLED` | Enable MTA-STS outbound TLS enforcement | `true` |
+| `BDS_MTASTS_TIMEOUT` | MTA-STS policy fetch timeout (seconds) | `10` |
+| `BDS_DANE_ENABLED` | Enable DANE/TLSA certificate verification | `true` |
+| `BDS_DANE_TIMEOUT` | DANE TLSA lookup timeout (seconds) | `5` |
+| `BDS_DANE_RESOLVER` | DNSSEC-validating DNS resolver | `1.1.1.1:53` |
+| `BDS_TLSRPT_ENABLED` | Enable TLS reporting (RFC 8460) | `true` |
+| `BDS_TLSRPT_INTERVAL` | TLSRPT report interval (seconds) | `86400` |
 | `BDS_RELAY_HOST` | External SMTP relay host (e.g. `smtp.sendgrid.net`) | (none — direct delivery) |
 | `BDS_RELAY_PORT` | External relay port | `587` |
 | `BDS_RELAY_USER` | Relay authentication username | (none) |
@@ -659,9 +685,46 @@ The application automatically creates two DynamoDB tables (`bdsmail-users` and `
 
 ---
 
-## Security Checks
+## Security
 
-Optional security checks can be enabled for both inbound and outbound mail. All checks are disabled by default and fail-open (if a check service is unavailable, mail is still accepted).
+BDS Mail provides comprehensive security at every layer. All security features are **enabled by default** and follow a fail-open strategy (if a check service is unavailable, mail is still accepted rather than dropped).
+
+### Rate Limiting & Brute-Force Protection
+
+Per-IP connection rate limiting and authentication failure tracking with automatic lockout.
+
+- **Connection rate**: Limits connections per second per IP (default: 10/s, burst 20)
+- **Auth lockout**: Locks out IPs after repeated failed login attempts (default: 5 failures, 15-minute lockout)
+- **Applies to**: Both SMTP and web UI login
+
+```bash
+BDS_RATELIMIT_ENABLED=true
+BDS_RATELIMIT_CONN_PER_SEC=10
+BDS_RATELIMIT_CONN_BURST=20
+BDS_RATELIMIT_MAX_AUTH_FAIL=5
+BDS_RATELIMIT_LOCKOUT_SEC=900
+```
+
+### Rspamd Spam Filtering
+
+Integrates with Rspamd via HTTP API for spam scoring on inbound mail.
+
+- **Score >= reject threshold** (default 15.0): Email rejected (SMTP 550)
+- **Score >= junk threshold** (default 6.0): Email delivered to "Junk" folder
+
+**Setup**:
+```bash
+# Install Rspamd
+apt-get install -y rspamd
+systemctl enable rspamd
+systemctl start rspamd
+
+# Configure in .env
+BDS_RSPAMD_ENABLED=true
+BDS_RSPAMD_URL=http://localhost:11333
+BDS_RSPAMD_REJECT_SCORE=15.0
+BDS_RSPAMD_JUNK_SCORE=6.0
+```
 
 ### ClamAV Virus Scanning
 
@@ -699,7 +762,7 @@ BDS_SAFEBROWSING_ENABLED=true
 BDS_SAFEBROWSING_API_KEY=your-api-key
 ```
 
-### SPF/DKIM/DMARC Verification (Inbound Only)
+### SPF/DKIM/DMARC Verification (Inbound)
 
 Verifies sender authenticity on inbound mail by checking SPF, DKIM signatures, and DMARC policy.
 
@@ -707,12 +770,80 @@ Verifies sender authenticity on inbound mail by checking SPF, DKIM signatures, a
 - **DMARC `p=quarantine`**: Email is delivered to the "Junk" folder
 - **DMARC `p=none` or no record**: Email is delivered normally
 
-**Setup**:
 ```bash
 BDS_AUTH_CHECK_ENABLED=true
 ```
 
-No additional services needed — verification uses DNS lookups and email header parsing.
+### MTA-STS (RFC 8461) — Outbound TLS Policy Enforcement
+
+Fetches and enforces MTA-STS policies for recipient domains during outbound delivery.
+
+- Looks up `_mta-sts.<domain>` DNS TXT record, then fetches policy via HTTPS
+- **Mode `enforce`**: Requires STARTTLS with valid certificate; rejects delivery to unauthorized MX hosts
+- **Mode `testing`**: Logs violations but still delivers
+- Policies are cached in memory with `max_age` expiry
+
+```bash
+BDS_MTASTS_ENABLED=true
+BDS_MTASTS_TIMEOUT=10
+```
+
+### DANE/TLSA (RFC 6698/7672) — Certificate Verification via DNSSEC
+
+Verifies outbound SMTP server certificates against TLSA DNS records.
+
+- Queries `_25._tcp.<mx-host>` for TLSA records using a DNSSEC-validating resolver
+- Supports DANE-EE (usage 3) and DANE-TA (usage 2) with SHA-256/SHA-512 matching
+- Only enforced when DNSSEC AD flag is set (authenticated data)
+
+```bash
+BDS_DANE_ENABLED=true
+BDS_DANE_TIMEOUT=5
+BDS_DANE_RESOLVER=1.1.1.1:53
+```
+
+### TLSRPT (RFC 8460) — TLS Reporting
+
+Sends daily aggregate reports about TLS connection successes/failures to receiving domains.
+
+- Looks up `_smtp._tls.<domain>` for the `rua=` reporting address
+- Generates JSON reports per RFC 8460 with failure details (STARTTLS not supported, certificate mismatch, DANE failure, etc.)
+
+```bash
+BDS_TLSRPT_ENABLED=true
+BDS_TLSRPT_INTERVAL=86400
+```
+
+### REQUIRETLS (RFC 8689)
+
+Supports the REQUIRETLS SMTP extension. When a sending MTA includes the REQUIRETLS flag, bdsmail ensures the entire outbound delivery path uses verified TLS.
+
+- Advertised in EHLO response when TLS is available
+- Combines with MTA-STS and DANE enforcement
+
+This feature is always enabled when TLS is configured — no separate configuration needed.
+
+### Security Check Pipeline (Inbound)
+
+```
+Connection → Rate Limit Check
+    ↓
+Auth (SMTP/Web) → Brute-force Check
+    ↓
+Message → ClamAV Scan → SPF/DKIM/DMARC → Rspamd Spam Score → Safe Browsing URL Check
+    ↓
+Deliver to INBOX / Junk / Reject
+```
+
+### Security Check Pipeline (Outbound)
+
+```
+Message → ClamAV Scan → Safe Browsing URL Check
+    ↓
+DKIM Sign → MTA-STS Policy Check → DANE/TLSA Verification → STARTTLS (enforced if required)
+    ↓
+Deliver via relay or direct MX
+```
 
 ---
 

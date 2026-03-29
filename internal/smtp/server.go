@@ -28,6 +28,7 @@ func NewServer(cfg *config.Config, s *store.Store, checker *security.Checker, re
 	srv.MaxMessageBytes = 10 * 1024 * 1024
 	srv.MaxRecipients = 50
 	srv.AllowInsecureAuth = true
+	srv.EnableREQUIRETLS = true
 
 	if certReloader != nil {
 		srv.TLSConfig = certReloader.TLSConfig()

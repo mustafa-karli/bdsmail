@@ -34,6 +34,14 @@ func (b *Backend) NewSession(c *gosmtp.Conn) (gosmtp.Session, error) {
 	if addr, ok := c.Conn().RemoteAddr().(*net.TCPAddr); ok {
 		remoteIP = addr.IP
 	}
+
+	if b.checker != nil && !b.checker.AllowConnection(remoteIP) {
+		return nil, &gosmtp.SMTPError{
+			Code:    421,
+			Message: "Too many connections from your IP, try again later",
+		}
+	}
+
 	return &Session{
 		backend:      b,
 		remoteIP:     remoteIP,
@@ -49,22 +57,40 @@ type Session struct {
 	user         string
 	remoteIP     net.IP
 	ehloHostname string
+	requireTLS   bool
 }
 
 // AuthPlain authenticates with full email (user@domain) as username.
 func (s *Session) AuthPlain(username, password string) error {
+	if s.backend.checker != nil && s.backend.checker.IsLockedOut(s.remoteIP) {
+		return &gosmtp.SMTPError{
+			Code:    421,
+			Message: "Too many failed login attempts, try again later",
+		}
+	}
+
 	user, err := s.backend.store.DB.GetUserByEmail(username)
 	if err != nil {
+		if s.backend.checker != nil {
+			s.backend.checker.RecordAuthResult(s.remoteIP, false)
+		}
 		return &gosmtp.SMTPError{
 			Code:    535,
 			Message: "Authentication failed",
 		}
 	}
 	if !user.CheckPassword(password) {
+		if s.backend.checker != nil {
+			s.backend.checker.RecordAuthResult(s.remoteIP, false)
+		}
 		return &gosmtp.SMTPError{
 			Code:    535,
 			Message: "Authentication failed",
 		}
+	}
+
+	if s.backend.checker != nil {
+		s.backend.checker.RecordAuthResult(s.remoteIP, true)
 	}
 	s.authed = true
 	s.user = user.Email()
@@ -73,6 +99,9 @@ func (s *Session) AuthPlain(username, password string) error {
 
 func (s *Session) Mail(from string, opts *gosmtp.MailOptions) error {
 	s.from = from
+	if opts != nil {
+		s.requireTLS = opts.RequireTLS
+	}
 	return nil
 }
 
@@ -174,8 +203,12 @@ func (s *Session) handleOutbound(ctx context.Context, rawEmail []byte, from stri
 	}
 
 	if len(external) > 0 && s.backend.relay != nil {
+		var opts []SendOption
+		if s.requireTLS {
+			opts = append(opts, WithRequireTLS())
+		}
 		go func() {
-			err := s.backend.relay.Send(s.user, external, subject, parsed.ContentType, parsed.TextBody, messageID)
+			err := s.backend.relay.Send(s.user, external, subject, parsed.ContentType, parsed.TextBody, messageID, opts...)
 			if err != nil {
 				log.Printf("SMTP relay error: %v", err)
 			}

@@ -132,9 +132,16 @@ func main() {
 	}
 
 	// Create SMTP relay for outbound delivery
-	relay := smtpserver.NewRelay(dkimKeys, cfg.DKIMSelector)
+	relay := smtpserver.NewRelay(dkimKeys, cfg.DKIMSelector, checker)
 	if cfg.RelayHost != "" {
 		relay.SetExternalRelay(cfg.RelayHost, cfg.RelayPort, cfg.RelayUser, cfg.RelayPassword)
+	}
+
+	// Wire TLSRPT send function (breaks circular dep: reporter -> relay)
+	if checker != nil {
+		checker.SetTLSRPTSendFunc(func(from string, to []string, subject, contentType, body, messageID string) error {
+			return relay.Send(from, to, subject, contentType, body, messageID)
+		})
 	}
 
 	// Initialize TLS cert reloader (if TLS is configured)

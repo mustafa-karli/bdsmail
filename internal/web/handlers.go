@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 
@@ -95,16 +96,33 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request, tmpl temp
 		return
 	}
 
+	clientIP := extractClientIP(r)
+
+	if h.checker != nil && h.checker.IsLockedOut(clientIP) {
+		tmpl.render(w, "layout", pageData{
+			Domain: domain,
+			Error:  "Too many failed login attempts, try again later",
+		})
+		return
+	}
+
 	username := strings.TrimSpace(r.FormValue("username"))
 	password := r.FormValue("password")
 
 	user, err := h.store.DB.GetUser(username, domain)
 	if err != nil || !user.CheckPassword(password) {
+		if h.checker != nil {
+			h.checker.RecordAuthResult(clientIP, false)
+		}
 		tmpl.render(w, "layout", pageData{
 			Domain: domain,
 			Error:  "Invalid username or password",
 		})
 		return
+	}
+
+	if h.checker != nil {
+		h.checker.RecordAuthResult(clientIP, true)
 	}
 
 	email := user.Email()
@@ -430,6 +448,14 @@ func extractMessageID(path, prefix string) string {
 		s = s[:idx]
 	}
 	return s
+}
+
+func extractClientIP(r *http.Request) net.IP {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	return net.ParseIP(host)
 }
 
 func collectExternalAddrs(cfg *config.Config, to, cc, bcc []string) []string {

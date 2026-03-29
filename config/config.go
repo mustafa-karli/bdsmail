@@ -214,6 +214,30 @@ func (e EnvMap) GetDuration(key string, fallback time.Duration) time.Duration {
 	return time.Duration(secs) * time.Second
 }
 
+func (e EnvMap) GetInt(key string, fallback int) int {
+	v, ok := e[key]
+	if !ok || v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return n
+}
+
+func (e EnvMap) GetFloat(key string, fallback float64) float64 {
+	v, ok := e[key]
+	if !ok || v == "" {
+		return fallback
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return fallback
+	}
+	return f
+}
+
 func (e EnvMap) GetInt64(key string, fallback int64) int64 {
 	v, ok := e[key]
 	if !ok || v == "" {
