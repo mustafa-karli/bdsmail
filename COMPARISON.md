@@ -29,7 +29,12 @@
 | **Mailing Lists** | Built-in | No | No | No | No | No | No | Yes |
 | **Aliases** | Yes (+ catch-all) | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | **Auto-Reply** | Built-in | Sieve | Sieve | Sieve | Sieve | No | Sieve | Built-in |
+| **Reply/Forward** | Built-in | Roundcube | SOGo/Roundcube | Built-in | Roundcube | Roundcube | N/A (no webmail) | Built-in |
 | **Full-Text Search** | Built-in | Dovecot FTS | Solr | Built-in | No | No | Optional | Built-in |
+| **Keyboard Shortcuts** | Yes (`c` to compose) | Roundcube | SOGo/Roundcube | Yes | Roundcube | Roundcube | N/A | Yes |
+| **Pagination** | Built-in (50/page) | Roundcube | SOGo/Roundcube | Built-in | Roundcube | Roundcube | N/A | Built-in |
+| **Unread Count** | Built-in (nav + folder) | Roundcube | SOGo/Roundcube | Built-in | Roundcube | Roundcube | N/A | Built-in |
+| **Mobile Responsive** | Yes (CSS) | Roundcube Elastic | SOGo | Yes | Roundcube Elastic | Roundcube | N/A | Yes |
 | **Docker** | Optional | No | Required | Optional | No | Required | Required | No |
 | **Single Binary** | Yes | No | No | Yes | No | No | No | No |
 | **Multi-Domain** | Yes (dynamic) | Yes | Yes | Yes | Single domain | Yes | Yes | Yes |
@@ -43,10 +48,10 @@
 ## Per-Server Summary
 
 ### bdsmail
-Single Go binary (~48MB) designed for cost-effective cloud deployment. Covers all major email security standards including MTA-STS, DANE, REQUIRETLS, and TLSRPT — a combination few servers offer. Pluggable database and storage backends (PostgreSQL, SQLite, DynamoDB, Firestore, GCS, S3) make it flexible across cloud providers. Built-in webmail, admin UI, CardDAV contacts, mailing lists, and mail filtering with no external dependencies beyond the database. Runs on ~$6-20/month.
+Single Go binary (~48MB) designed for cost-effective cloud deployment. Covers all major email security standards including MTA-STS, DANE, REQUIRETLS, and TLSRPT — a combination few servers offer. Pluggable database and storage backends (PostgreSQL, SQLite, DynamoDB, Firestore, GCS, S3) make it flexible across cloud providers. Built-in webmail with reply/reply-all/forward, pagination, unread badges, keyboard shortcuts, and mobile-responsive layout. Admin UI, CardDAV contacts, mailing lists, and mail filtering with no external dependencies beyond the database. Runs on ~$6-20/month.
 
-**Strengths:** Minimal footprint, cloud-native storage, comprehensive email security, single binary deployment, Google Safe Browsing integration.
-**Gaps:** No CalDAV/calendar, no JMAP, no shared folders.
+**Strengths:** Minimal footprint, cloud-native storage, comprehensive email security, single binary deployment, Google Safe Browsing integration, responsive webmail with reply/forward.
+**Gaps:** No CalDAV/calendar, no JMAP, no shared folders, no WYSIWYG editor.
 
 ### iRedMail
 Installer-based solution that bundles Postfix, Dovecot, Roundcube, and SpamAssassin on a fresh Linux server. Well-documented and widely deployed. Free edition covers basics; paid iRedAdmin-Pro adds advanced management features.
@@ -99,6 +104,7 @@ Enterprise-grade Java-based collaboration suite with email, calendar, contacts, 
 - **Deployment simplicity** — Single binary, single `.env` file, no container orchestration needed
 - **Cost** — Full-featured mail server from $6/month
 - **Unique features** — Google Safe Browsing link detection, built-in mailing lists, dynamic domain addition
+- **Webmail UX** — Reply/forward, keyboard shortcuts, pagination, unread badges, mobile responsive — all with zero JS dependencies
 
 ### Where alternatives have an edge
 - **CalDAV/Calendar** — Stalwart, mailcow (SOGo), iRedMail (SOGo), Mail-in-a-Box (Nextcloud), Zimbra all offer calendar

@@ -167,6 +167,9 @@ func pgsqlQueries() map[string]string {
 		QRecordAutoReplySent:   `INSERT INTO auto_reply_log (user_email, sender_email) VALUES ($1, $2) ON CONFLICT(user_email, sender_email) DO UPDATE SET sent_at = NOW()`,
 		QHasAutoRepliedRecently: "SELECT COUNT(*) FROM auto_reply_log WHERE user_email = $1 AND sender_email = $2 AND sent_at > $3",
 
+		// Unread count
+		QCountUnread: "SELECT COUNT(*) FROM messages WHERE owner_user = $1 AND folder = $2 AND seen = FALSE AND deleted = FALSE",
+
 		// Search
 		QSearchMessages: `SELECT id, message_id, from_addr, to_addrs, cc_addrs, bcc_addrs, subject, content_type, body, attachments, gcs_key, owner_user, folder, seen, deleted, received_at
 			FROM messages WHERE owner_user = $1 AND deleted = FALSE AND (subject ILIKE $2 OR body ILIKE $3 OR from_addr ILIKE $4 OR to_addrs ILIKE $5) ORDER BY received_at DESC LIMIT 100`,

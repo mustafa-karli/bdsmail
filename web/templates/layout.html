@@ -13,7 +13,7 @@
         <div class="container">
             <a href="/inbox" class="brand">BDS Mail</a>
             <div class="nav-links">
-                <a href="/inbox">Inbox</a>
+                <a href="/inbox">Inbox{{if .UnreadCount}} <span class="badge">{{.UnreadCount}}</span>{{end}}</a>
                 <a href="/compose">Compose</a>
                 <a href="/contacts">Contacts</a>
                 <a href="/filters">Filters</a>
@@ -29,6 +29,11 @@
     <div class="container">
         {{template "page-content" .}}
     </div>
+    {{if .Email}}{{if ne .Email "admin"}}
+    <script>
+    document.addEventListener('keydown',function(e){if(e.key==='c'&&!e.target.matches('input,textarea,select'))window.location='/compose'});
+    </script>
+    {{end}}{{end}}
 </body>
 </html>
 {{end}}

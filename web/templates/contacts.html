@@ -29,7 +29,8 @@
                 <td>{{.Name}}</td>
                 <td>{{.Email}}</td>
                 <td>{{.Phone}}</td>
-                <td>
+                <td style="display:flex; gap:4px;">
+                    <a href="/compose?to={{urlEncode .Email}}" class="btn btn-sm">Email</a>
                     <form method="POST" action="/contacts" style="display:inline;">
                         <input type="hidden" name="action" value="delete">
                         <input type="hidden" name="contact_id" value="{{.ID}}">

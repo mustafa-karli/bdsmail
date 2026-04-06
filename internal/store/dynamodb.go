@@ -1001,6 +1001,22 @@ func (db *DbDynamo) HasAutoRepliedRecently(userEmail, senderEmail string, cooldo
 	return time.Since(sentAt) < cooldown
 }
 
+// --- Count operations ---
+
+func (db *DbDynamo) CountUnread(ownerEmail, folder string) int {
+	msgs, err := db.ListMessages(ownerEmail, folder)
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, m := range msgs {
+		if !m.Seen {
+			count++
+		}
+	}
+	return count
+}
+
 // --- Search operations ---
 
 func (db *DbDynamo) SearchMessages(ownerEmail, query string) ([]*model.Message, error) {

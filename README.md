@@ -699,6 +699,190 @@ The application automatically creates two DynamoDB tables (`bdsmail-users` and `
 
 ---
 
+## Deployment: AWS Lightsail + DynamoDB + SES
+
+A complete, low-cost AWS deployment using Lightsail for compute, DynamoDB for storage, and SES for outbound relay. Total cost: **~$6/month** (Lightsail $5 + SES ~$1 for light usage). DynamoDB stays within the always-free tier.
+
+### Prerequisites
+
+- An AWS account
+- A domain name with DNS access (e.g. Route 53, GoDaddy, Cloudflare)
+- Go 1.21+ (for building)
+
+### 1. Create a Lightsail Instance
+
+```bash
+aws lightsail create-instances \
+    --instance-names bdsmail \
+    --availability-zone us-east-1a \
+    --blueprint-id debian_12 \
+    --bundle-id nano_3_2 \
+    --tags key=app,value=bdsmail
+```
+
+The `nano_3_2` plan ($5/month) includes 512MB RAM, 2 vCPUs, 20GB SSD, and 2TB transfer — more than enough for bdsmail.
+
+### 2. Allocate a Static IP
+
+```bash
+aws lightsail allocate-static-ip --static-ip-name bdsmail-ip
+aws lightsail attach-static-ip --static-ip-name bdsmail-ip --instance-name bdsmail
+```
+
+Note the IP address for DNS configuration.
+
+### 3. Open Firewall Ports
+
+```bash
+for PORT in 25 80 110 143 443; do
+    aws lightsail open-instance-public-ports \
+        --instance-name bdsmail \
+        --port-info fromPort=$PORT,toPort=$PORT,protocol=tcp
+done
+```
+
+### 4. Configure DNS
+
+Add these records for each domain (e.g. `yourdomain.com`):
+
+| Type | Name | Value |
+|------|------|-------|
+| A | mail | `<your-lightsail-static-ip>` |
+| MX | @ | `mail.yourdomain.com` (priority 10) |
+| TXT | @ | `v=spf1 ip4:<your-lightsail-static-ip> ~all` |
+| TXT | _dmarc | `v=DMARC1; p=none; rua=mailto:postmaster@yourdomain.com` |
+
+DKIM records are generated during deployment (Step 6).
+
+### 5. Set Up DynamoDB
+
+Create an IAM policy for the Lightsail instance. DynamoDB tables are created automatically on first startup.
+
+```bash
+# Create IAM policy
+cat > /tmp/bdsmail-policy.json << 'EOF'
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "dynamodb:CreateTable",
+                "dynamodb:DescribeTable",
+                "dynamodb:PutItem",
+                "dynamodb:GetItem",
+                "dynamodb:Query",
+                "dynamodb:Scan",
+                "dynamodb:UpdateItem",
+                "dynamodb:DeleteItem"
+            ],
+            "Resource": "arn:aws:dynamodb:*:*:table/bdsmail-*"
+        }
+    ]
+}
+EOF
+
+aws iam create-policy \
+    --policy-name bdsmail-dynamodb \
+    --policy-document file:///tmp/bdsmail-policy.json
+```
+
+On the Lightsail instance, configure AWS credentials:
+
+```bash
+sudo mkdir -p /opt/bdsmail
+sudo aws configure --profile bdsmail
+# Enter your Access Key ID, Secret Access Key, and region (e.g. us-east-1)
+```
+
+Or use an IAM role if running on EC2-compatible infrastructure.
+
+### 6. Deploy
+
+SSH into your Lightsail instance:
+
+```bash
+ssh admin@<your-lightsail-static-ip>
+```
+
+Build and upload from your dev machine:
+
+```bash
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/bdsmail ./cmd/bdsmail/
+
+scp bin/bdsmail admin@<your-lightsail-static-ip>:/tmp/bdsmail
+scp -r web admin@<your-lightsail-static-ip>:/tmp/web
+scp -r scripts admin@<your-lightsail-static-ip>:/tmp/scripts
+```
+
+On the Lightsail instance:
+
+```bash
+sudo -i
+cd /tmp
+
+export BDS_DOMAINS="yourdomain.com"
+export BDS_DB_TYPE=dynamodb
+export BDS_DYNAMODB_REGION=us-east-1
+
+bash /tmp/scripts/deploy.sh
+```
+
+### 7. Configure `.env` for DynamoDB + SES
+
+Edit `/opt/bdsmail/.env`:
+
+```bash
+BDS_DOMAINS=yourdomain.com
+BDS_DB_TYPE=dynamodb
+BDS_DYNAMODB_REGION=us-east-1
+
+# SES relay (see "Amazon SES Setup" section above)
+BDS_RELAY_HOST=email-smtp.us-east-1.amazonaws.com
+BDS_RELAY_PORT=587
+BDS_RELAY_USER=your-ses-smtp-username
+BDS_RELAY_PASSWORD=your-ses-smtp-password
+
+# Optional: S3 for attachments
+BDS_BUCKET_TYPE=s3
+BDS_S3_REGION=us-east-1
+BDS_S3_BUCKET=your-bucket-name
+
+# Ports (Lightsail allows binding to privileged ports)
+BDS_SMTP_PORT=25
+BDS_POP3_PORT=110
+BDS_IMAP_PORT=143
+BDS_HTTPS_PORT=443
+BDS_HTTP_PORT=80
+```
+
+Restart:
+
+```bash
+sudo systemctl restart bdsmail
+```
+
+### 8. Create Users and Verify
+
+```bash
+cd /opt/bdsmail
+./bdsmail -adduser you@yourdomain.com -password 'yourpassword' -displayname 'Your Name'
+```
+
+Open `https://mail.yourdomain.com` and log in.
+
+### Cost Breakdown
+
+| Service | Monthly Cost | Notes |
+|---------|-------------|-------|
+| Lightsail nano | $5.00 | 512MB RAM, 2 vCPU, 20GB SSD |
+| DynamoDB | $0.00 | Always-free tier (25GB, 25 RCU/WCU) |
+| SES | ~$0.10/1K emails | First 62K/month free from EC2 |
+| S3 (optional) | ~$0.50 | For attachments, 5GB free tier |
+| **Total** | **~$6/month** | |
+
+---
+
 ## Security
 
 BDS Mail provides comprehensive security at every layer. All security features are **enabled by default** and follow a fail-open strategy (if a check service is unavailable, mail is still accepted rather than dropped).

@@ -10,7 +10,7 @@
             {{if .Message.CC}}
             <span><strong>CC:</strong> {{joinAddrs .Message.CC}}</span>
             {{end}}
-            <span><strong>Date:</strong> {{formatTime .Message.ReceivedAt}}</span>
+            <span><strong>Date:</strong> {{formatTime .Message.ReceivedAt}} ({{relativeTime .Message.ReceivedAt}})</span>
         </div>
     </div>
     {{if eq .Message.ContentType "text/html"}}
@@ -23,12 +23,15 @@
         <strong>Attachments:</strong>
         <ul style="margin:8px 0 0;padding-left:20px;">
         {{range .Message.Attachments}}
-            <li><a href="/attachment/{{$.Message.ID}}/{{.ID}}">{{.Filename}}</a> ({{.Size}} bytes)</li>
+            <li><a href="/attachment/{{$.Message.ID}}/{{.ID}}">{{.Filename}}</a> ({{humanSize .Size}})</li>
         {{end}}
         </ul>
     </div>
     {{end}}
     <div class="message-actions">
+        <a href="/compose?reply={{.Message.ID}}" class="btn btn-sm">Reply</a>
+        {{if .Message.CC}}<a href="/compose?replyall={{.Message.ID}}" class="btn btn-sm">Reply All</a>{{end}}
+        <a href="/compose?forward={{.Message.ID}}" class="btn btn-sm btn-secondary">Forward</a>
         <a href="/inbox" class="btn btn-secondary btn-sm">Back</a>
         <form action="/message/{{.Message.ID}}/delete" method="POST" style="display:inline;">
             <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Delete this message?')">Delete</button>

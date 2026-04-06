@@ -61,6 +61,9 @@ const (
 	QRecordAutoReplySent   = "record_auto_reply_sent"
 	QHasAutoRepliedRecently = "has_auto_replied_recently"
 
+	// Unread count
+	QCountUnread = "count_unread"
+
 	// Search
 	QSearchMessages = "search_messages"
 
@@ -98,6 +101,7 @@ type Database interface {
 	DeleteUserMessages(email string) error
 	SearchMessages(ownerEmail, query string) ([]*model.Message, error)
 	ListUserFolders(ownerEmail string) ([]string, error)
+	CountUnread(ownerEmail, folder string) int
 
 	// Alias operations
 	CreateAlias(aliasEmail string, targetEmails []string) error
@@ -717,6 +721,14 @@ func (db *DbSQL) HasAutoRepliedRecently(userEmail, senderEmail string, cooldown 
 	cutoff := time.Now().Add(-cooldown)
 	db.Conn.QueryRow(db.Queries[QHasAutoRepliedRecently], userEmail, senderEmail, db.FormatTime(cutoff)).Scan(&count)
 	return count > 0
+}
+
+// --- Count operations ---
+
+func (db *DbSQL) CountUnread(ownerEmail, folder string) int {
+	var count int
+	db.Conn.QueryRow(db.Queries[QCountUnread], ownerEmail, folder).Scan(&count)
+	return count
 }
 
 // --- Search operations ---

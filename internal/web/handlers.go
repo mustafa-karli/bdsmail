@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,6 +53,9 @@ type pageData struct {
 	Filters         interface{}
 	AutoReply       *model.AutoReply
 	Contacts        []contactView
+	UnreadCount     int
+	Page            int
+	TotalPages      int
 }
 
 type contactView struct {
@@ -81,11 +85,13 @@ func (h *Handlers) userPageData(email string) pageData {
 	if user, err := h.store.DB.GetUserByEmail(email); err == nil {
 		displayName = user.DisplayName
 	}
+	unread := h.store.DB.CountUnread(email, "INBOX")
 	return pageData{
 		Username:    username,
 		DisplayName: displayName,
 		Email:       email,
 		Domain:      domain,
+		UnreadCount: unread,
 	}
 }
 
@@ -156,6 +162,28 @@ func (h *Handlers) HandleLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
+const messagesPerPage = 50
+
+func paginateMessages(messages []*model.Message, page int) ([]*model.Message, int, int) {
+	total := len(messages)
+	totalPages := (total + messagesPerPage - 1) / messagesPerPage
+	if totalPages == 0 {
+		totalPages = 1
+	}
+	if page < 1 {
+		page = 1
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+	start := (page - 1) * messagesPerPage
+	end := start + messagesPerPage
+	if end > total {
+		end = total
+	}
+	return messages[start:end], page, totalPages
+}
+
 func (h *Handlers) HandleInbox(w http.ResponseWriter, r *http.Request, tmpl templateRenderer) {
 	email, ok := h.requireAuth(w, r)
 	if !ok {
@@ -171,8 +199,13 @@ func (h *Handlers) HandleInbox(w http.ResponseWriter, r *http.Request, tmpl temp
 		return
 	}
 
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	paged, currentPage, totalPages := paginateMessages(messages, page)
+
 	pd.Folder = "INBOX"
-	pd.Messages = messages
+	pd.Messages = paged
+	pd.Page = currentPage
+	pd.TotalPages = totalPages
 	folders, _ := h.store.DB.ListUserFolders(email)
 	pd.Folders = folders
 	tmpl.render(w, "layout", pd)
@@ -193,8 +226,13 @@ func (h *Handlers) HandleSent(w http.ResponseWriter, r *http.Request, tmpl templ
 		return
 	}
 
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	paged, currentPage, totalPages := paginateMessages(messages, page)
+
 	pd.Folder = "Sent"
-	pd.Messages = messages
+	pd.Messages = paged
+	pd.Page = currentPage
+	pd.TotalPages = totalPages
 	folders, _ := h.store.DB.ListUserFolders(email)
 	pd.Folders = folders
 	tmpl.render(w, "layout", pd)
@@ -210,6 +248,59 @@ func (h *Handlers) HandleCompose(w http.ResponseWriter, r *http.Request, tmpl te
 
 	if r.Method == http.MethodGet {
 		pd.FormContentType = "text/plain"
+
+		// Pre-fill from query params
+		if to := r.URL.Query().Get("to"); to != "" {
+			pd.FormTo = to
+		}
+
+		// Reply
+		if replyID := r.URL.Query().Get("reply"); replyID != "" {
+			if msg, err := h.store.DB.GetMessage(replyID); err == nil && msg.OwnerUser == email {
+				pd.FormTo = extractEmailAddr(msg.From)
+				subj := msg.Subject
+				if !strings.HasPrefix(strings.ToLower(subj), "re:") {
+					subj = "Re: " + subj
+				}
+				pd.FormSubject = subj
+				pd.FormBody = quoteBody(msg.From, msg.ReceivedAt, msg.Body)
+			}
+		}
+
+		// Reply All
+		if replyID := r.URL.Query().Get("replyall"); replyID != "" {
+			if msg, err := h.store.DB.GetMessage(replyID); err == nil && msg.OwnerUser == email {
+				pd.FormTo = extractEmailAddr(msg.From)
+				// Add original To and CC, excluding self
+				var cc []string
+				for _, addr := range append(msg.To, msg.CC...) {
+					a := extractEmailAddr(addr)
+					if a != email && a != extractEmailAddr(msg.From) {
+						cc = append(cc, a)
+					}
+				}
+				pd.FormCC = strings.Join(cc, ", ")
+				subj := msg.Subject
+				if !strings.HasPrefix(strings.ToLower(subj), "re:") {
+					subj = "Re: " + subj
+				}
+				pd.FormSubject = subj
+				pd.FormBody = quoteBody(msg.From, msg.ReceivedAt, msg.Body)
+			}
+		}
+
+		// Forward
+		if fwdID := r.URL.Query().Get("forward"); fwdID != "" {
+			if msg, err := h.store.DB.GetMessage(fwdID); err == nil && msg.OwnerUser == email {
+				subj := msg.Subject
+				if !strings.HasPrefix(strings.ToLower(subj), "fwd:") {
+					subj = "Fwd: " + subj
+				}
+				pd.FormSubject = subj
+				pd.FormBody = forwardBody(msg.From, msg.ReceivedAt, strings.Join(msg.To, ", "), msg.Subject, msg.Body)
+			}
+		}
+
 		tmpl.render(w, "layout", pd)
 		return
 	}
@@ -614,10 +705,15 @@ func (h *Handlers) HandleFolder(w http.ResponseWriter, r *http.Request, tmpl tem
 		log.Printf("error listing messages for folder %s: %v", folder, err)
 	}
 
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	paged, currentPage, totalPages := paginateMessages(messages, page)
+
 	pd.Folder = folder
 	folders, _ := h.store.DB.ListUserFolders(email)
 	pd.Folders = folders
-	pd.Messages = messages
+	pd.Messages = paged
+	pd.Page = currentPage
+	pd.TotalPages = totalPages
 	tmpl.render(w, "layout", pd)
 }
 
@@ -690,6 +786,39 @@ func extractClientIP(r *http.Request) net.IP {
 		host = r.RemoteAddr
 	}
 	return net.ParseIP(host)
+}
+
+// extractEmailAddr extracts a bare email from "Name <email>" or returns as-is.
+func extractEmailAddr(s string) string {
+	if start := strings.Index(s, "<"); start != -1 {
+		if end := strings.Index(s[start:], ">"); end != -1 {
+			return s[start+1 : start+end]
+		}
+	}
+	return strings.TrimSpace(s)
+}
+
+func quoteBody(from string, at time.Time, body string) string {
+	var b strings.Builder
+	b.WriteString("\n\n")
+	b.WriteString(fmt.Sprintf("On %s, %s wrote:\n", at.Format("Jan 02, 2006 3:04 PM"), from))
+	for _, line := range strings.Split(body, "\n") {
+		b.WriteString("> ")
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+func forwardBody(from string, at time.Time, to, subject, body string) string {
+	var b strings.Builder
+	b.WriteString("\n\n---------- Forwarded message ----------\n")
+	b.WriteString(fmt.Sprintf("From: %s\n", from))
+	b.WriteString(fmt.Sprintf("Date: %s\n", at.Format("Jan 02, 2006 3:04 PM")))
+	b.WriteString(fmt.Sprintf("Subject: %s\n", subject))
+	b.WriteString(fmt.Sprintf("To: %s\n\n", to))
+	b.WriteString(body)
+	return b.String()
 }
 
 func collectExternalAddrs(cfg *config.Config, to, cc, bcc []string) []string {

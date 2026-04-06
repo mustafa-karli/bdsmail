@@ -340,6 +340,20 @@ func (db *DbFirestore) DeleteMessage(id string) error {
 	return err
 }
 
+func (db *DbFirestore) CountUnread(ownerEmail, folder string) int {
+	msgs, err := db.ListMessages(ownerEmail, folder)
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, m := range msgs {
+		if !m.Seen {
+			count++
+		}
+	}
+	return count
+}
+
 func (db *DbFirestore) SearchMessages(ownerEmail, query string) ([]*model.Message, error) {
 	iter := db.messages().
 		Where("owner_user", "==", ownerEmail).

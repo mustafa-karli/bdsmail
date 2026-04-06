@@ -177,6 +177,9 @@ func sqliteQueries() map[string]string {
 		QRecordAutoReplySent:   `INSERT INTO auto_reply_log (user_email, sender_email) VALUES (?, ?) ON CONFLICT(user_email, sender_email) DO UPDATE SET sent_at = datetime('now')`,
 		QHasAutoRepliedRecently: "SELECT COUNT(*) FROM auto_reply_log WHERE user_email = ? AND sender_email = ? AND sent_at > ?",
 
+		// Unread count
+		QCountUnread: "SELECT COUNT(*) FROM messages WHERE owner_user = ? AND folder = ? AND seen = 0 AND deleted = 0",
+
 		// Search
 		QSearchMessages: `SELECT id, message_id, from_addr, to_addrs, cc_addrs, bcc_addrs, subject, content_type, body, attachments, gcs_key, owner_user, folder, seen, deleted, received_at
 			FROM messages WHERE owner_user = ? AND deleted = 0 AND (subject LIKE ? OR body LIKE ? OR from_addr LIKE ? OR to_addrs LIKE ?) ORDER BY received_at DESC LIMIT 100`,
