@@ -39,6 +39,7 @@ type Config struct {
 	S3Region           string
 	S3Bucket           string
 	MaxAttachmentBytes int64
+	AmplifyURL         string // Amplify app URL for webmail CNAME (e.g. "d1234.cloudfront.net")
 }
 
 // HostToDomain maps a Host header like "mail.domain1.com" to "domain1.com".
@@ -54,11 +55,13 @@ func (c *Config) HostToDomain(host string) string {
 			return d
 		}
 	}
-	if strings.HasPrefix(host, "mail.") {
-		candidate := host[5:]
-		for _, d := range c.Domains {
-			if candidate == d {
-				return d
+	for _, prefix := range []string{"mail.", "webmail."} {
+		if strings.HasPrefix(host, prefix) {
+			candidate := host[len(prefix):]
+			for _, d := range c.Domains {
+				if candidate == d {
+					return d
+				}
 			}
 		}
 	}
@@ -174,6 +177,7 @@ func Load() (*Config, EnvMap) {
 		S3Region:           env.Get("BDS_S3_REGION", "us-west-2"),
 		S3Bucket:           env.Get("BDS_S3_BUCKET", ""),
 		MaxAttachmentBytes: env.GetInt64("BDS_MAX_ATTACHMENT_BYTES", 10*1024*1024),
+		AmplifyURL:     env.Get("BDS_AMPLIFY_URL", ""),
 		RelayHost:      env.Get("BDS_RELAY_HOST", ""),
 		RelayPort:     env.Get("BDS_RELAY_PORT", "587"),
 		RelayUser:     env.Get("BDS_RELAY_USER", ""),

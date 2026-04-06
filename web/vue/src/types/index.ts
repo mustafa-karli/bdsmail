@@ -76,6 +76,9 @@ export interface DomainResult {
   domain: string
   message: string
   dnsRecords: DnsRecord[]
+  sesStatus?: string
+  domainApiKey?: string
+  webmailCname?: string
 }
 
 export interface DnsRecord {

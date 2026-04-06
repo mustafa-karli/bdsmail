@@ -1,10 +1,12 @@
 package admin
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"log"
@@ -14,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/mustafakarli/bdsmail/config"
+	"github.com/mustafakarli/bdsmail/internal/awsutil"
 	smtpserver "github.com/mustafakarli/bdsmail/internal/smtp"
 	"github.com/mustafakarli/bdsmail/internal/tlsutil"
 )
@@ -28,18 +31,23 @@ type DNSRecord struct {
 
 // DomainResult is returned after a successful domain registration.
 type DomainResult struct {
-	Domain     string      `json:"domain"`
-	DNSRecords []DNSRecord `json:"dns_records"`
-	Message    string      `json:"message"`
+	Domain           string      `json:"domain"`
+	DNSRecords       []DNSRecord `json:"dns_records"`
+	Message          string      `json:"message"`
+	SESStatus        string      `json:"ses_status,omitempty"`        // SES verification status
+	DomainAPIKey     string      `json:"domain_api_key,omitempty"`    // Per-domain API key (shown once)
+	WebmailCNAME     string      `json:"webmail_cname,omitempty"`     // Amplify URL for webmail CNAME
 }
 
 // RegisterDomain adds a new domain to the running server:
 // 1. Validates the domain
 // 2. Generates DKIM key
-// 3. Adds domain to config
-// 4. Expands TLS certificate (if certbot is available)
-// 5. Persists config to .env
-// 6. Returns DNS records to add
+// 3. Verifies domain in SES (if configured)
+// 4. Generates per-domain API key
+// 5. Adds domain to config
+// 6. Expands TLS certificate (if certbot is available)
+// 7. Persists config to .env
+// 8. Returns DNS records, SES status, API key
 func RegisterDomain(cfg *config.Config, relay *smtpserver.Relay, certReloader *tlsutil.CertReloader, domain string) (*DomainResult, error) {
 	domain = strings.TrimSpace(strings.ToLower(domain))
 	if domain == "" {
@@ -71,6 +79,51 @@ func RegisterDomain(cfg *config.Config, relay *smtpserver.Relay, certReloader *t
 		}
 	}
 
+	// Build DNS records
+	records := buildDNSRecords(domain, cfg.DKIMSelector, dkimPubKey)
+
+	// SES domain verification (if relay is SES)
+	sesStatus := ""
+	if cfg.RelayHost != "" && strings.Contains(cfg.RelayHost, "amazonaws.com") {
+		region := extractSESRegion(cfg.RelayHost)
+		sesClient, err := awsutil.NewSESClient(region)
+		if err == nil {
+			ctx := context.Background()
+			verification, err := sesClient.VerifyDomain(ctx, domain)
+			if err != nil {
+				log.Printf("warning: SES domain verification failed: %v", err)
+				sesStatus = "Failed"
+			} else {
+				sesStatus = "Pending"
+				// Add SES DKIM CNAME records
+				for i, token := range verification.DKIMTokens {
+					records = append(records, DNSRecord{
+						Type:  "CNAME",
+						Name:  fmt.Sprintf("%s._domainkey", token),
+						Value: fmt.Sprintf("%s.dkim.amazonses.com", token),
+					})
+					_ = i
+				}
+			}
+		} else {
+			log.Printf("warning: could not create SES client: %v", err)
+		}
+	}
+
+	// Generate per-domain API key
+	apiKey := generateDomainAPIKey()
+
+	// Add webmail CNAME record if Amplify URL is configured
+	webmailCNAME := ""
+	if cfg.AmplifyURL != "" {
+		webmailCNAME = cfg.AmplifyURL
+		records = append(records, DNSRecord{
+			Type:  "CNAME",
+			Name:  "webmail",
+			Value: cfg.AmplifyURL,
+		})
+	}
+
 	// Add domain to config
 	cfg.AddDomain(domain)
 
@@ -82,14 +135,45 @@ func RegisterDomain(cfg *config.Config, relay *smtpserver.Relay, certReloader *t
 		log.Printf("warning: failed to persist domains to .env: %v", err)
 	}
 
-	// Build DNS records
-	records := buildDNSRecords(domain, cfg.DKIMSelector, dkimPubKey)
-
 	return &DomainResult{
-		Domain:     domain,
-		DNSRecords: records,
-		Message:    fmt.Sprintf("Domain %s registered successfully. Add the DNS records below to your DNS provider.", domain),
+		Domain:       domain,
+		DNSRecords:   records,
+		Message:      fmt.Sprintf("Domain %s registered successfully. Add the DNS records below to your DNS provider.", domain),
+		SESStatus:    sesStatus,
+		DomainAPIKey: apiKey,
+		WebmailCNAME: webmailCNAME,
 	}, nil
+}
+
+// CheckDomainStatus checks SES verification and DKIM status for a domain.
+func CheckDomainStatus(cfg *config.Config, domain string) (verifyStatus, dkimStatus string, err error) {
+	if cfg.RelayHost == "" || !strings.Contains(cfg.RelayHost, "amazonaws.com") {
+		return "N/A", "N/A", nil
+	}
+	region := extractSESRegion(cfg.RelayHost)
+	sesClient, err := awsutil.NewSESClient(region)
+	if err != nil {
+		return "", "", err
+	}
+	ctx := context.Background()
+	verifyStatus, _ = sesClient.CheckVerificationStatus(ctx, domain)
+	dkimStatus, _ = sesClient.CheckDKIMStatus(ctx, domain)
+	return verifyStatus, dkimStatus, nil
+}
+
+func generateDomainAPIKey() string {
+	b := make([]byte, 32)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+func extractSESRegion(relayHost string) string {
+	// email-smtp.us-east-1.amazonaws.com → us-east-1
+	parts := strings.Split(relayHost, ".")
+	if len(parts) >= 3 {
+		return parts[1]
+	}
+	return "us-east-1"
 }
 
 func generateDKIMKey(keyDir, domain string) (string, error) {

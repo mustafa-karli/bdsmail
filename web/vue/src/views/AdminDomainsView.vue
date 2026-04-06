@@ -61,6 +61,13 @@ onMounted(async () => {
   <div v-else class="card">
     <AdminNav />
     <AlertBanner :error="error" />
+    <div v-if="result?.domainApiKey" class="alert alert-success" style="background:#fff3cd;color:#856404;border-color:#ffeeba;margin-top:12px">
+      <strong>Save this API key now — it won't be shown again.</strong><br><br>
+      <strong>Domain API Key:</strong> <code>{{ result.domainApiKey }}</code>
+    </div>
+    <div v-if="result?.sesStatus" class="alert alert-success" style="background:#e3f2fd;color:#1565c0;border-color:#bbdefb;margin-top:8px">
+      <strong>SES Verification:</strong> {{ result.sesStatus }} — DNS records below include SES DKIM CNAME records.
+    </div>
     <div v-if="result" class="card" style="margin-top:12px;background:#f5faff">
       <h3 style="color:#1976D2;margin-bottom:12px">DNS Records for {{ result.domain }}</h3>
       <p style="margin-bottom:12px;color:#666;font-size:0.9em">Add these records to your DNS provider:</p>

@@ -500,3 +500,230 @@ systemctl stop bdsmail
 cp /tmp/bdsmail /opt/bdsmail/bdsmail && chmod +x /opt/bdsmail/bdsmail
 systemctl start bdsmail
 ```
+
+---
+
+## Reference Architecture: Lightsail + Amplify + DynamoDB + S3 + SES
+
+This is the recommended multi-domain deployment. One Lightsail instance serves all domains. One Amplify app serves the webmail UI for all domains. Each domain gets its own DNS records, SES verification, DKIM keys, and OAuth API keys.
+
+### Architecture
+
+```
+                    ┌─────────────────────────────┐
+                    │         DNS Provider         │
+                    │  (Route 53, GoDaddy, etc.)   │
+                    └─────────┬───────────────────┘
+                              │
+              ┌───────────────┼───────────────┐
+              │               │               │
+    mail.domain.com    webmail.domain.com    MX record
+    (A → Lightsail IP)  (CNAME → Amplify)   (→ mail.domain.com)
+              │               │
+              ▼               ▼
+    ┌─────────────────┐  ┌──────────────┐
+    │   AWS Lightsail  │  │ AWS Amplify  │
+    │                  │  │              │
+    │  SMTP :25        │  │  Vue 3 SPA   │
+    │  POP3 :110       │  │  (static)    │
+    │  IMAP :143       │◄─┤              │
+    │  HTTPS :443      │  │  Calls       │
+    │   /api/*         │  │  mail.X/api  │
+    │   /oauth/*       │  └──────────────┘
+    │                  │
+    └────┬────┬───┬────┘
+         │    │   │
+         ▼    ▼   ▼
+    DynamoDB  S3  SES
+    (data)  (att) (outbound)
+```
+
+### What Each Domain Gets
+
+| Component | Per Domain | Shared |
+|-----------|-----------|--------|
+| **Backend** | `mail.domain.com` → A record to Lightsail IP | Single Lightsail instance |
+| **Frontend** | `webmail.domain.com` → CNAME to Amplify URL | Single Amplify deployment |
+| **Email** | MX record → `mail.domain.com` | Single SMTP server |
+| **DKIM** | Unique RSA key pair in `dkim/{domain}.pem` | Same server signs |
+| **SES** | Separate domain verification + DKIM tokens | Same SES account |
+| **OAuth** | Per-domain API key + OAuth clients | Same OIDC provider |
+| **Storage** | S3 prefix `{domain}/` in shared bucket | Single S3 bucket |
+| **Database** | Data isolated by `owner_user` (email includes domain) | Single DynamoDB |
+
+### Initial Platform Setup (One-Time)
+
+#### 1. Deploy Lightsail Backend
+
+Follow [Option 1: AWS Lightsail + DynamoDB + SES](#option-1-aws-lightsail--dynamodb--ses) above. This creates the shared backend.
+
+Note the Lightsail **static IP** — all domains will point here.
+
+#### 2. Deploy Amplify Frontend
+
+```bash
+# Build Vue SPA
+cd web/vue && npm install && npm run build
+
+# Install Amplify CLI and init
+npm install -g @aws-amplify/cli
+amplify init    # Choose: JavaScript, Vue, dist, npm run build
+amplify add hosting    # Choose: Amplify Console, Manual deployment
+amplify publish
+```
+
+Note the Amplify **app URL** (e.g. `main.d1abc2def3.amplifyapp.com`).
+
+#### 3. Configure Backend for Amplify
+
+Add to `/opt/bdsmail/.env` on Lightsail:
+
+```bash
+BDS_AMPLIFY_URL=main.d1abc2def3.amplifyapp.com
+```
+
+Restart: `sudo systemctl restart bdsmail`
+
+This enables:
+- CORS headers for `webmail.{domain}` origins on `/api/*`
+- Webmail CNAME record in domain onboarding output
+- Vue SPA auto-detects backend from `webmail.{domain}` → `mail.{domain}/api`
+
+---
+
+### Domain Onboarding Process
+
+Adding a new domain is a single admin action. The server handles everything automatically.
+
+#### Step 1: Add Domain via Admin Panel
+
+**Option A: Web Admin UI**
+
+Go to `https://mail.firstdomain.com/admin/domains`, enter admin secret, type the new domain, click **Add Domain**.
+
+**Option B: CLI**
+
+```bash
+cd /opt/bdsmail
+./bdsmail -adddomain newdomain.com
+```
+
+**Option C: JSON API**
+
+```bash
+curl -X POST https://mail.firstdomain.com/admin/api/domains \
+  -H "Authorization: Bearer YOUR_ADMIN_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"domain": "newdomain.com"}'
+```
+
+#### What Happens Automatically
+
+When you add a domain, the server performs these steps in sequence:
+
+| Step | Action | Result |
+|------|--------|--------|
+| 1 | **Validate** | Checks domain format, not already registered |
+| 2 | **Generate DKIM key** | Creates 2048-bit RSA key at `dkim/newdomain.com.pem` |
+| 3 | **Verify in SES** | Calls AWS SES API: `VerifyDomainIdentity` + `VerifyDomainDkim` |
+| 4 | **Generate API key** | Creates 64-char hex key for this domain |
+| 5 | **Add to config** | Domain added to running server (no restart) |
+| 6 | **Expand TLS cert** | Runs `certbot --expand` to add `mail.newdomain.com` |
+| 7 | **Persist to .env** | Updates `BDS_DOMAINS=` in env file |
+| 8 | **Return DNS records** | Full list of records the user needs to add |
+
+#### Step 2: Add DNS Records
+
+The server returns all required DNS records. Add them to your DNS provider:
+
+| Type | Name | Value | Purpose |
+|------|------|-------|---------|
+| **A** | `mail` | `<lightsail-ip>` | Backend server |
+| **CNAME** | `webmail` | `main.d1abc2def3.amplifyapp.com` | Frontend (Amplify) |
+| **MX** | `@` | `mail.newdomain.com` (priority 10) | Inbound email routing |
+| **TXT** | `@` | `v=spf1 a mx ~all` | SPF sender authorization |
+| **TXT** | `default._domainkey` | `v=DKIM1; k=rsa; p=<key>` | bdsmail DKIM signing |
+| **TXT** | `_dmarc` | `v=DMARC1; p=none; ...` | DMARC policy |
+| **CNAME** | `<token1>._domainkey` | `<token1>.dkim.amazonses.com` | SES DKIM (1 of 3) |
+| **CNAME** | `<token2>._domainkey` | `<token2>.dkim.amazonses.com` | SES DKIM (2 of 3) |
+| **CNAME** | `<token3>._domainkey` | `<token3>.dkim.amazonses.com` | SES DKIM (3 of 3) |
+
+The A record and CNAME for webmail are the same for every domain (shared infrastructure). The rest are domain-specific.
+
+#### Step 3: Wait for Verification
+
+- **DNS propagation**: 5-60 minutes
+- **SES verification**: 5-15 minutes after DNS propagates
+- **TLS certificate**: Immediate (certbot auto-obtains)
+
+Check status:
+
+```bash
+# DNS
+dig A mail.newdomain.com
+dig MX newdomain.com
+
+# SES (via admin panel or API — shows Pending/Success)
+curl https://mail.firstdomain.com/admin/api/domains \
+  -H "Authorization: Bearer YOUR_ADMIN_SECRET"
+```
+
+#### Step 4: Create Users
+
+```bash
+./bdsmail -adduser alice@newdomain.com -password 'password' -displayname 'Alice'
+./bdsmail -adduser bob@newdomain.com -password 'password' -displayname 'Bob'
+```
+
+#### Step 5: Test
+
+- **Web UI**: `https://mail.newdomain.com` (Go templates) or `https://webmail.newdomain.com` (Vue SPA)
+- **Send test**: Compose from webmail to Gmail, verify DKIM passes
+- **Receive test**: Send from Gmail to `alice@newdomain.com`
+- **IMAP**: Configure Thunderbird with `mail.newdomain.com:143`
+
+#### Step 6: Register OAuth Apps (Optional)
+
+Users of `newdomain.com` can register their own OAuth apps at the Developer Portal:
+- Go templates: `https://mail.newdomain.com/developer`
+- Vue SPA: `https://webmail.newdomain.com/developer`
+
+This enables "Sign in with newdomain.com" for their applications.
+
+---
+
+### Adding Many Domains
+
+For bulk onboarding, use the JSON API in a script:
+
+```bash
+#!/bin/bash
+ADMIN_SECRET="your-admin-secret"
+SERVER="https://mail.firstdomain.com"
+
+for DOMAIN in domain1.com domain2.com domain3.com; do
+  echo "=== Onboarding $DOMAIN ==="
+  curl -s -X POST "$SERVER/admin/api/domains" \
+    -H "Authorization: Bearer $ADMIN_SECRET" \
+    -H "Content-Type: application/json" \
+    -d "{\"domain\": \"$DOMAIN\"}" | python3 -m json.tool
+  echo ""
+done
+```
+
+The output includes all DNS records for each domain. Add them to your DNS provider in bulk.
+
+---
+
+### Cost Per Additional Domain
+
+| Resource | Additional Cost |
+|----------|----------------|
+| Lightsail | $0 (shared instance) |
+| DynamoDB | $0 (shared tables, free tier) |
+| S3 | $0 (shared bucket, pennies per GB) |
+| Amplify | $0 (shared deployment, free tier) |
+| SES | $0.10/1K emails (per domain usage) |
+| DNS | $0.50/zone/month (Route 53) or free (GoDaddy, Cloudflare) |
+| TLS | $0 (Let's Encrypt, auto-renewed) |
+| **Total per domain** | **~$0-0.50/month + email volume** |

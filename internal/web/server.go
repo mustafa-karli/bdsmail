@@ -239,6 +239,12 @@ func (s *Server) Start() error {
 		log.Printf("Vue SPA available at /app/")
 	}
 
+	// Wrap with CORS if Amplify frontend is configured
+	var handler http.Handler = mux
+	if s.cfg.AmplifyURL != "" {
+		handler = corsMiddleware(mux, s.cfg)
+	}
+
 	addr := ":" + s.cfg.HTTPSPort
 	log.Printf("Web server starting on %s", addr)
 
@@ -246,14 +252,14 @@ func (s *Server) Start() error {
 		tlsCfg := s.certReloader.TLSConfig()
 		server := &http.Server{
 			Addr:      addr,
-			Handler:   mux,
+			Handler:   handler,
 			TLSConfig: tlsCfg,
 		}
 		return server.ListenAndServeTLS("", "")
 	}
 
 	if s.cfg.TLSCert != "" && s.cfg.TLSKey != "" {
-		return http.ListenAndServeTLS(addr, s.cfg.TLSCert, s.cfg.TLSKey, mux)
+		return http.ListenAndServeTLS(addr, s.cfg.TLSCert, s.cfg.TLSKey, handler)
 	}
-	return http.ListenAndServe(addr, mux)
+	return http.ListenAndServe(addr, handler)
 }

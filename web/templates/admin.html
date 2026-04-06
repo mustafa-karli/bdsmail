@@ -49,9 +49,20 @@
 
     {{if $data.Result}}
     <div class="alert alert-success">{{$data.Result.Message}}</div>
+    {{if $data.Result.DomainAPIKey}}
+    <div class="alert alert-success" style="background:#fff3cd;color:#856404;border-color:#ffeeba;">
+        <strong>Save this API key now — it won't be shown again.</strong><br><br>
+        <strong>Domain API Key:</strong> <code>{{$data.Result.DomainAPIKey}}</code>
+    </div>
+    {{end}}
+    {{if $data.Result.SESStatus}}
+    <div class="alert alert-success" style="background:#e3f2fd;color:#1565c0;border-color:#bbdefb;">
+        <strong>SES Verification:</strong> {{$data.Result.SESStatus}} — DNS records below include SES DKIM CNAME records.
+    </div>
+    {{end}}
     <div class="card" style="margin-top:12px; background:#f5faff;">
         <h3 style="color:#1976D2; margin-bottom:12px;">DNS Records for {{$data.Result.Domain}}</h3>
-        <p style="margin-bottom:12px; color:#666; font-size:0.9em;">Add these records to your DNS provider (e.g. GoDaddy):</p>
+        <p style="margin-bottom:12px; color:#666; font-size:0.9em;">Add these records to your DNS provider:</p>
         <table class="message-list">
             <thead>
                 <tr>
