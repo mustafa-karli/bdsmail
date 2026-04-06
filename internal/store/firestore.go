@@ -871,6 +871,42 @@ func (db *DbFirestore) DeleteContact(id string) error {
 	return err
 }
 
+// --- Auth / 2FA operations (stub — full implementation needed for Firestore) ---
+
+func (db *DbFirestore) Enable2FA(email, secret, backupCodes string) error {
+	return fmt.Errorf("2FA not yet implemented for Firestore")
+}
+func (db *DbFirestore) Disable2FA(email string) error {
+	return fmt.Errorf("2FA not yet implemented for Firestore")
+}
+func (db *DbFirestore) Get2FAStatus(email string) (bool, string, string, error) {
+	return false, "", "", nil
+}
+func (db *DbFirestore) CreateTrustedDevice(device *model.TrustedDevice) error {
+	return fmt.Errorf("trusted devices not yet implemented for Firestore")
+}
+func (db *DbFirestore) IsTrustedDevice(email, fingerprint string) (bool, error) { return false, nil }
+func (db *DbFirestore) ListTrustedDevices(email string) ([]*model.TrustedDevice, error) {
+	return nil, nil
+}
+func (db *DbFirestore) RevokeTrustedDevice(id string) error { return nil }
+func (db *DbFirestore) UpdateDeviceLastSeen(id string) error { return nil }
+func (db *DbFirestore) CreateOTP(otp *model.OTP) error {
+	return fmt.Errorf("OTP not yet implemented for Firestore")
+}
+func (db *DbFirestore) GetOTP(email string) (*model.OTP, error) {
+	return nil, fmt.Errorf("not found")
+}
+func (db *DbFirestore) IncrementOTPAttempts(email string) error { return nil }
+func (db *DbFirestore) ClearOTP(email string) error            { return nil }
+func (db *DbFirestore) CreateLoginToken(token *model.LoginToken) error {
+	return fmt.Errorf("login tokens not yet implemented for Firestore")
+}
+func (db *DbFirestore) GetLoginToken(token string) (*model.LoginToken, error) {
+	return nil, fmt.Errorf("not found")
+}
+func (db *DbFirestore) DeleteLoginToken(token string) error { return nil }
+
 // --- Domain operations ---
 
 type docDomain struct {

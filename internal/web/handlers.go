@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/mustafakarli/bdsmail/config"
 	"github.com/mustafakarli/bdsmail/internal/mimeutil"
+	authpkg "github.com/mustafakarli/bdsmail/internal/auth"
 	"github.com/mustafakarli/bdsmail/internal/model"
 	"github.com/mustafakarli/bdsmail/internal/oauth"
 	"github.com/mustafakarli/bdsmail/internal/security"
@@ -22,15 +23,16 @@ import (
 )
 
 type Handlers struct {
-	store    *store.Store
-	relay    *smtp.Relay
-	sessions *SessionStore
-	cfg      *config.Config
-	checker  *security.Checker
+	store       *store.Store
+	relay       *smtp.Relay
+	sessions    *SessionStore
+	cfg         *config.Config
+	checker     *security.Checker
+	authService *authpkg.Service
 }
 
-func NewHandlers(s *store.Store, relay *smtp.Relay, sessions *SessionStore, cfg *config.Config, checker *security.Checker) *Handlers {
-	return &Handlers{store: s, relay: relay, sessions: sessions, cfg: cfg, checker: checker}
+func NewHandlers(s *store.Store, relay *smtp.Relay, sessions *SessionStore, cfg *config.Config, checker *security.Checker, authSvc *authpkg.Service) *Handlers {
+	return &Handlers{store: s, relay: relay, sessions: sessions, cfg: cfg, checker: checker, authService: authSvc}
 }
 
 type pageData struct {
@@ -156,6 +158,23 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request, tmpl temp
 	}
 
 	email := user.Email()
+
+	// Check 2FA
+	if user.TwoFAEnabled && h.authService != nil {
+		fingerprint := r.FormValue("device_fingerprint")
+		trusted, _ := h.authService.IsTrustedDevice(email, fingerprint)
+		if !trusted {
+			// Issue login token and redirect to 2FA verification
+			loginToken, err := h.authService.CreateLoginToken(email)
+			if err != nil {
+				tmpl.render(w, "layout", pageData{Domain: domain, Error: "Failed to initiate 2FA"})
+				return
+			}
+			http.Redirect(w, r, "/verify-2fa?token="+loginToken, http.StatusSeeOther)
+			return
+		}
+	}
+
 	if err := createSession(w, h.sessions, email); err != nil {
 		tmpl.render(w, "layout", pageData{
 			Domain: domain,

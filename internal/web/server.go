@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/mustafakarli/bdsmail/config"
+	authpkg "github.com/mustafakarli/bdsmail/internal/auth"
 	"github.com/mustafakarli/bdsmail/internal/carddav"
 	"github.com/mustafakarli/bdsmail/internal/oauth"
 	"github.com/mustafakarli/bdsmail/internal/security"
@@ -60,7 +61,12 @@ func NewServer(cfg *config.Config, s *store.Store, relay *smtp.Relay, checker *s
 	}
 
 	sessions := NewSessionStore()
-	handlers := NewHandlers(s, relay, sessions, cfg, checker)
+	issuer := "bdsmail"
+	if len(cfg.Domains) > 0 {
+		issuer = "mail." + cfg.Domains[0]
+	}
+	authService := authpkg.NewService(s.DB, issuer)
+	handlers := NewHandlers(s, relay, sessions, cfg, checker, authService)
 	adminHandlers := NewAdminHandlers(cfg, s, relay, certReloader)
 
 	return &Server{
@@ -166,9 +172,23 @@ func (s *Server) Start() error {
 		s.handlers.HandleFolder(w, r, s.renderer("inbox"))
 	})
 
+	// 2FA
+	twoFA := NewTwoFAHandlers(s.handlers, s.handlers.authService)
+	mux.HandleFunc("/verify-2fa", func(w http.ResponseWriter, r *http.Request) {
+		twoFA.HandleVerify2FA(w, r, s.renderer("verify_2fa"))
+	})
+	mux.HandleFunc("/settings/2fa", func(w http.ResponseWriter, r *http.Request) {
+		twoFA.HandleSetup2FA(w, r, s.renderer("setup_2fa"))
+	})
+	mux.HandleFunc("/api/auth/verify-2fa", twoFA.APIVerify2FA)
+	mux.HandleFunc("/api/auth/2fa/setup", twoFA.APISetup2FA)
+	mux.HandleFunc("/api/auth/2fa/disable", twoFA.APIDisable2FA)
+	mux.HandleFunc("/api/auth/trusted-devices", twoFA.APIListTrustedDevices)
+	mux.HandleFunc("/api/auth/trusted-devices/revoke", twoFA.APIRevokeTrustedDevice)
+
 	// OAuth / OIDC
-	issuer := "https://mail." + s.cfg.Domains[0]
-	oauthHandler, err := oauth.NewHandler(s.handlers.store.DB, issuer)
+	oauthIssuer := "https://mail." + s.cfg.Domains[0]
+	oauthHandler, err := oauth.NewHandler(s.handlers.store.DB, oauthIssuer)
 	if err != nil {
 		return fmt.Errorf("oauth handler init failed: %w", err)
 	}

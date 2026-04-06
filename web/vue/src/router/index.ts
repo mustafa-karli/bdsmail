@@ -5,6 +5,7 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/login', component: () => import('../views/LoginView.vue'), meta: { public: true } },
+    { path: '/verify-2fa', component: () => import('../views/Verify2FAView.vue'), meta: { public: true } },
     { path: '/', redirect: '/inbox' },
     { path: '/inbox', component: () => import('../views/InboxView.vue'), props: { folder: 'INBOX' } },
     { path: '/sent', component: () => import('../views/InboxView.vue'), props: { folder: 'Sent' } },
@@ -16,6 +17,7 @@ const router = createRouter({
     { path: '/filters', component: () => import('../views/FiltersView.vue') },
     { path: '/settings/autoreply', component: () => import('../views/AutoReplyView.vue') },
     { path: '/developer', component: () => import('../views/DeveloperView.vue') },
+    { path: '/settings/2fa', component: () => import('../views/Setup2FAView.vue') },
     { path: '/admin/domains', component: () => import('../views/AdminDomainsView.vue'), meta: { admin: true } },
     { path: '/admin/users', component: () => import('../views/AdminUsersView.vue'), meta: { admin: true } },
     { path: '/admin/aliases', component: () => import('../views/AdminAliasesView.vue'), meta: { admin: true } },

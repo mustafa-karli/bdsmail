@@ -35,6 +35,7 @@
 | **Rate Limiting** | Built-in | Fail2ban | Fail2ban | Built-in | Fail2ban | Fail2ban | Fail2ban | No |
 | **Brute-force Protection** | Built-in | Fail2ban | Fail2ban | Built-in | Fail2ban | Fail2ban | Fail2ban | No |
 | | | | | | | | | |
+| **2FA (TOTP)** | Yes (+ backup codes, trusted devices) | No | No | No | No | No | No | No |
 | **OAuth 2.0 / OIDC Provider** | Yes (built-in IdP) | No | No | No | No | No | No | No |
 | **Developer Portal** | Yes (self-service) | No | No | No | No | No | No | No |
 | **JWT ID Tokens** | Yes (RS256) | No | No | No | No | No | No | No |

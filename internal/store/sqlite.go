@@ -48,6 +48,12 @@ func sqliteMigrations() []string {
 			domain TEXT NOT NULL,
 			display_name TEXT NOT NULL DEFAULT '',
 			password_hash TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'A',
+			twofa_enabled INTEGER NOT NULL DEFAULT 0,
+			twofa_secret TEXT NOT NULL DEFAULT '',
+			twofa_backup_codes TEXT NOT NULL DEFAULT '',
+			login_attempts INTEGER NOT NULL DEFAULT 0,
+			last_login_attempt TEXT,
 			created_at TEXT DEFAULT (datetime('now')),
 			UNIQUE(username, domain)
 		)`,
@@ -157,13 +163,38 @@ func sqliteMigrations() []string {
 			expires_at TEXT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_oauth_client_domain ON oauth_client(domain)`,
+		`CREATE TABLE IF NOT EXISTS user_trusted_device (
+			id TEXT PRIMARY KEY,
+			user_email TEXT NOT NULL,
+			device_fingerprint TEXT NOT NULL,
+			device_name TEXT NOT NULL DEFAULT '',
+			trusted_at TEXT DEFAULT (datetime('now')),
+			expires_at TEXT NOT NULL,
+			last_seen_at TEXT
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_trusted_device_user ON user_trusted_device(user_email)`,
+		`CREATE TABLE IF NOT EXISTS user_otp (
+			id TEXT PRIMARY KEY,
+			user_email TEXT NOT NULL,
+			code TEXT NOT NULL,
+			purpose TEXT NOT NULL DEFAULT 'login',
+			expires_at TEXT NOT NULL,
+			attempts INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_otp_user ON user_otp(user_email)`,
+		`CREATE TABLE IF NOT EXISTS login_token (
+			token TEXT PRIMARY KEY,
+			user_email TEXT NOT NULL,
+			created_at TEXT DEFAULT (datetime('now')),
+			expires_at TEXT NOT NULL
+		)`,
 	}
 }
 
 func sqliteQueries() map[string]string {
 	return map[string]string{
 		QCreateUser:  `INSERT INTO user_account (username, domain, display_name, password_hash) VALUES (?, ?, ?, ?)`,
-		QGetUser:     `SELECT id, username, domain, display_name, password_hash, created_at FROM user_account WHERE username = ? AND domain = ?`,
+		QGetUser:     `SELECT id, username, domain, display_name, password_hash, status, twofa_enabled, twofa_secret, twofa_backup_codes, login_attempts, last_login_attempt, created_at FROM user_account WHERE username = ? AND domain = ?`,
 		QUserExists:  `SELECT COUNT(*) FROM user_account WHERE username = ? AND domain = ?`,
 		QSaveMessage: `INSERT INTO mail_content (id, message_id, from_addr, to_addrs, cc_addrs, bcc_addrs, subject, content_type, body, attachments, gcs_key, owner_user, folder, seen, received_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		QListMessages: `SELECT id, message_id, from_addr, to_addrs, cc_addrs, bcc_addrs, subject, content_type, body, attachments, gcs_key, owner_user, folder, seen, deleted, received_at
@@ -176,8 +207,8 @@ func sqliteQueries() map[string]string {
 		QMarkDeleted:   `UPDATE mail_content SET deleted = 1 WHERE id = ?`,
 		QDeleteMessage: `DELETE FROM mail_content WHERE id = ?`,
 
-		QListUsers:          `SELECT id, username, domain, display_name, password_hash, created_at FROM user_account ORDER BY domain, username`,
-		QListUsersByDomain:  `SELECT id, username, domain, display_name, password_hash, created_at FROM user_account WHERE domain = ? ORDER BY username`,
+		QListUsers:          `SELECT id, username, domain, display_name, password_hash, status, twofa_enabled, twofa_secret, twofa_backup_codes, login_attempts, last_login_attempt, created_at FROM user_account ORDER BY domain, username`,
+		QListUsersByDomain:  `SELECT id, username, domain, display_name, password_hash, status, twofa_enabled, twofa_secret, twofa_backup_codes, login_attempts, last_login_attempt, created_at FROM user_account WHERE domain = ? ORDER BY username`,
 		QUpdateUser:         `UPDATE user_account SET display_name = ?, password_hash = ? WHERE username = ? AND domain = ?`,
 		QDeleteUser:         `DELETE FROM user_account WHERE username = ? AND domain = ?`,
 		QDeleteUserMessages: `DELETE FROM mail_content WHERE owner_user = ?`,
@@ -222,6 +253,26 @@ func sqliteQueries() map[string]string {
 		QListContacts:  `SELECT id, owner_email, vcard_data, etag, created_at, updated_at FROM user_contact WHERE owner_email = ? ORDER BY updated_at DESC`,
 		QUpdateContact: `UPDATE user_contact SET vcard_data = ?, etag = ?, updated_at = datetime('now') WHERE id = ?`,
 		QDeleteContact: `DELETE FROM user_contact WHERE id = ?`,
+
+		// Auth / 2FA
+		QEnable2FA:    `UPDATE user_account SET twofa_enabled = 1, twofa_secret = ?, twofa_backup_codes = ? WHERE username || '@' || domain = ?`,
+		QDisable2FA:   `UPDATE user_account SET twofa_enabled = 0, twofa_secret = '', twofa_backup_codes = '' WHERE username || '@' || domain = ?`,
+		QGet2FAStatus: `SELECT twofa_enabled, twofa_secret, twofa_backup_codes FROM user_account WHERE username || '@' || domain = ?`,
+
+		QCreateTrustedDevice: `INSERT INTO user_trusted_device (id, user_email, device_fingerprint, device_name, expires_at) VALUES (?, ?, ?, ?, ?)`,
+		QIsTrustedDevice:     `SELECT COUNT(*) FROM user_trusted_device WHERE user_email = ? AND device_fingerprint = ? AND expires_at > datetime('now')`,
+		QListTrustedDevices:  `SELECT id, user_email, device_fingerprint, device_name, trusted_at, expires_at, last_seen_at FROM user_trusted_device WHERE user_email = ? AND expires_at > datetime('now') ORDER BY trusted_at DESC`,
+		QRevokeTrustedDevice: `DELETE FROM user_trusted_device WHERE id = ?`,
+		QUpdateDeviceLastSeen: `UPDATE user_trusted_device SET last_seen_at = datetime('now') WHERE id = ?`,
+
+		QCreateOTP:            `INSERT INTO user_otp (id, user_email, code, purpose, expires_at) VALUES (?, ?, ?, ?, ?)`,
+		QGetOTP:               `SELECT id, user_email, code, purpose, expires_at, attempts FROM user_otp WHERE user_email = ? ORDER BY expires_at DESC LIMIT 1`,
+		QIncrementOTPAttempts: `UPDATE user_otp SET attempts = attempts + 1 WHERE user_email = ?`,
+		QClearOTP:             `DELETE FROM user_otp WHERE user_email = ?`,
+
+		QCreateLoginToken: `INSERT INTO login_token (token, user_email, expires_at) VALUES (?, ?, ?)`,
+		QGetLoginToken:    `SELECT token, user_email, created_at, expires_at FROM login_token WHERE token = ?`,
+		QDeleteLoginToken: `DELETE FROM login_token WHERE token = ?`,
 
 		QCreateDomain:       `INSERT INTO domain (name, api_key_hash, ses_status, dkim_status, status, created_by) VALUES (?, ?, ?, ?, ?, ?)`,
 		QGetDomain:          `SELECT name, api_key_hash, ses_status, dkim_status, status, created_by, created_at FROM domain WHERE name = ?`,

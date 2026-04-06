@@ -1,0 +1,45 @@
+{{define "title-setup_2fa"}}Two-Factor Authentication{{end}}
+{{define "content-setup_2fa"}}
+<div class="card">
+    <div class="toolbar">
+        <h2>Two-Factor Authentication</h2>
+        <a href="/inbox" class="btn btn-sm btn-secondary">Back to Inbox</a>
+    </div>
+
+    {{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+    {{if .Success}}<div class="alert alert-success">{{.Success}}</div>{{end}}
+
+    {{if .OAuthScope}}
+    <div style="background:#f5faff;padding:16px;border-radius:4px;margin-bottom:16px;">
+        <h3 style="color:#1976D2;margin-bottom:12px;">Scan QR Code</h3>
+        <p style="margin-bottom:8px;font-size:0.9em;color:#555;">Scan this with your authenticator app (Google Authenticator, Authy, etc.):</p>
+        <p style="margin-bottom:8px;"><img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={{.OAuthScope}}" alt="QR Code" width="200" height="200"></p>
+        <p style="font-size:0.85em;color:#888;">Or enter manually: <code>{{.OAuthState}}</code></p>
+    </div>
+    {{end}}
+
+    {{if .AdminData}}
+    <div class="alert alert-success" style="background:#fff3cd;color:#856404;border-color:#ffeeba;">
+        <strong>Save these backup codes now — they won't be shown again.</strong><br><br>
+        {{range .AdminData}}<code style="display:inline-block;margin:2px 4px;padding:2px 6px;background:#fff;border:1px solid #ddd;border-radius:3px;">{{.}}</code>{{end}}
+    </div>
+    {{end}}
+
+    {{if eq .OAuthNonce "enabled"}}
+    <p style="color:#2e7d32;margin-bottom:16px;">2FA is <strong>enabled</strong> for your account.</p>
+    <form method="POST" action="/settings/2fa">
+        <input type="hidden" name="action" value="disable">
+        <div style="display:flex;gap:8px;align-items:end;">
+            <div style="flex:1;"><label>Enter current 2FA code to disable</label><input type="text" name="code" placeholder="123456" required></div>
+            <button type="submit" class="btn btn-danger" style="height:42px;">Disable 2FA</button>
+        </div>
+    </form>
+    {{else}}
+    <p style="color:#666;margin-bottom:16px;">2FA is <strong>not enabled</strong> for your account.</p>
+    <form method="POST" action="/settings/2fa">
+        <input type="hidden" name="action" value="setup">
+        <button type="submit" class="btn">Enable 2FA</button>
+    </form>
+    {{end}}
+</div>
+{{end}}

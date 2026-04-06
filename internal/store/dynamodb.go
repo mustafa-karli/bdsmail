@@ -1257,6 +1257,40 @@ func (db *DbDynamo) unmarshalContact(item map[string]types.AttributeValue) (*mod
 	return c, nil
 }
 
+// --- Auth / 2FA operations (stub — full implementation needed for DynamoDB) ---
+
+func (db *DbDynamo) Enable2FA(email, secret, backupCodes string) error {
+	return fmt.Errorf("2FA not yet implemented for DynamoDB")
+}
+func (db *DbDynamo) Disable2FA(email string) error {
+	return fmt.Errorf("2FA not yet implemented for DynamoDB")
+}
+func (db *DbDynamo) Get2FAStatus(email string) (bool, string, string, error) {
+	return false, "", "", nil // 2FA not enabled by default
+}
+func (db *DbDynamo) CreateTrustedDevice(device *model.TrustedDevice) error {
+	return fmt.Errorf("trusted devices not yet implemented for DynamoDB")
+}
+func (db *DbDynamo) IsTrustedDevice(email, fingerprint string) (bool, error) { return false, nil }
+func (db *DbDynamo) ListTrustedDevices(email string) ([]*model.TrustedDevice, error) {
+	return nil, nil
+}
+func (db *DbDynamo) RevokeTrustedDevice(id string) error { return nil }
+func (db *DbDynamo) UpdateDeviceLastSeen(id string) error { return nil }
+func (db *DbDynamo) CreateOTP(otp *model.OTP) error {
+	return fmt.Errorf("OTP not yet implemented for DynamoDB")
+}
+func (db *DbDynamo) GetOTP(email string) (*model.OTP, error) { return nil, fmt.Errorf("not found") }
+func (db *DbDynamo) IncrementOTPAttempts(email string) error { return nil }
+func (db *DbDynamo) ClearOTP(email string) error            { return nil }
+func (db *DbDynamo) CreateLoginToken(token *model.LoginToken) error {
+	return fmt.Errorf("login tokens not yet implemented for DynamoDB")
+}
+func (db *DbDynamo) GetLoginToken(token string) (*model.LoginToken, error) {
+	return nil, fmt.Errorf("not found")
+}
+func (db *DbDynamo) DeleteLoginToken(token string) error { return nil }
+
 // --- Domain operations ---
 
 func (db *DbDynamo) CreateDomain(domain *model.Domain) error {

@@ -27,6 +27,7 @@ A multi-domain mail server written in Go. Single binary, zero required external 
 - **Server-side filtering**: Sieve-style rules with default presets
 - **Auto-reply / Vacation**: Configurable with date ranges and cooldown
 - **Contacts / CardDAV**: Web UI and protocol-level contact sync
+- **Two-factor authentication**: TOTP-based 2FA with backup codes and trusted devices (30-day bypass)
 - **OAuth 2.0 / OpenID Connect**: Built-in identity provider — "Sign in with yourdomain.com"
 - **Developer portal**: Self-service OAuth app registration for third-party integrations
 - **Admin panel**: Web UI for domains, users, aliases, and mailing lists
@@ -157,7 +158,7 @@ All security features are **enabled by default** with a fail-open strategy.
 | **Inbound** | ClamAV scan, SPF/DKIM/DMARC verify, Rspamd spam score, Safe Browsing URL check |
 | **Outbound** | ClamAV scan, Safe Browsing check, DKIM signing |
 | **Transport** | MTA-STS policy enforcement, DANE/TLSA verification, REQUIRETLS, TLSRPT reporting |
-| **Auth** | Bcrypt passwords, session cookies, OAuth 2.0 with JWT |
+| **Auth** | Bcrypt passwords, TOTP 2FA, backup codes, trusted devices, session cookies, OAuth 2.0 with JWT |
 | **Secrets** | CLI flags + SecretProvider (local JSON, AWS Secrets Manager, GCP Secret Manager) |
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for security configuration details.
@@ -209,6 +210,9 @@ erDiagram
     user_contact }o--|| user_account : "owner_email"
     auto_reply |o--|| user_account : "user_email"
     auto_reply_log }o--|| user_account : "user_email"
+    user_trusted_device }o--|| user_account : "user_email"
+    user_otp }o--|| user_account : "user_email"
+    login_token }o--|| user_account : "user_email"
 
     mail_content {
         TEXT id PK
@@ -249,6 +253,10 @@ erDiagram
         TEXT domain
         TEXT display_name
         TEXT password_hash
+        TEXT status
+        BOOLEAN twofa_enabled
+        TEXT twofa_secret
+        INTEGER login_attempts
         TIMESTAMPTZ created_at
     }
 
@@ -265,6 +273,30 @@ erDiagram
         TEXT user_email PK
         TEXT sender_email PK
         TIMESTAMPTZ sent_at
+    }
+
+    user_trusted_device {
+        TEXT id PK
+        TEXT user_email FK
+        TEXT device_fingerprint
+        TEXT device_name
+        TIMESTAMPTZ expires_at
+        TIMESTAMPTZ last_seen_at
+    }
+
+    user_otp {
+        TEXT id PK
+        TEXT user_email FK
+        TEXT code
+        TEXT purpose
+        TIMESTAMPTZ expires_at
+        INTEGER attempts
+    }
+
+    login_token {
+        TEXT token PK
+        TEXT user_email FK
+        TIMESTAMPTZ expires_at
     }
 ```
 

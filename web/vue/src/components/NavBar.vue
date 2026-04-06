@@ -26,6 +26,7 @@ async function handleLogout() {
         <router-link to="/contacts">Contacts</router-link>
         <router-link to="/filters">Filters</router-link>
         <router-link to="/settings/autoreply">Auto-Reply</router-link>
+        <router-link to="/settings/2fa">2FA</router-link>
         <router-link to="/developer">Developer</router-link>
         <span class="user-info">{{ auth.user?.displayName || auth.user?.email }}</span>
         <button class="btn btn-sm btn-secondary" @click="handleLogout">Logout</button>

@@ -97,6 +97,22 @@ func (a *APIHandlers) HandleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	email := user.Email()
+
+	// Check 2FA
+	if user.TwoFAEnabled && a.handlers.authService != nil {
+		loginToken, err := a.handlers.authService.CreateLoginToken(email)
+		if err != nil {
+			jsonError(w, 500, "Failed to initiate 2FA")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"twoFactorRequired": true,
+			"loginToken":        loginToken,
+		})
+		return
+	}
+
 	if err := createSession(w, a.handlers.sessions, email); err != nil {
 		jsonError(w, 500, "Failed to create session")
 		return

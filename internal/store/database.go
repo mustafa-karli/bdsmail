@@ -75,6 +75,23 @@ const (
 	QUpdateContact = "update_contact"
 	QDeleteContact = "delete_contact"
 
+	// Auth / 2FA
+	QEnable2FA          = "enable_2fa"
+	QDisable2FA         = "disable_2fa"
+	QGet2FAStatus       = "get_2fa_status"
+	QCreateTrustedDevice = "create_trusted_device"
+	QIsTrustedDevice    = "is_trusted_device"
+	QListTrustedDevices = "list_trusted_devices"
+	QRevokeTrustedDevice = "revoke_trusted_device"
+	QUpdateDeviceLastSeen = "update_device_last_seen"
+	QCreateOTP          = "create_otp"
+	QGetOTP             = "get_otp"
+	QIncrementOTPAttempts = "increment_otp_attempts"
+	QClearOTP           = "clear_otp"
+	QCreateLoginToken   = "create_login_token"
+	QGetLoginToken      = "get_login_token"
+	QDeleteLoginToken   = "delete_login_token"
+
 	// Domain
 	QCreateDomain       = "create_domain"
 	QGetDomain          = "get_domain"
@@ -167,6 +184,24 @@ type ContactStore interface {
 	DeleteContact(id string) error
 }
 
+type AuthStore interface {
+	Enable2FA(email, secret, backupCodes string) error
+	Disable2FA(email string) error
+	Get2FAStatus(email string) (enabled bool, secret string, backupCodes string, err error)
+	CreateTrustedDevice(device *model.TrustedDevice) error
+	IsTrustedDevice(email, fingerprint string) (bool, error)
+	ListTrustedDevices(email string) ([]*model.TrustedDevice, error)
+	RevokeTrustedDevice(id string) error
+	UpdateDeviceLastSeen(id string) error
+	CreateOTP(otp *model.OTP) error
+	GetOTP(email string) (*model.OTP, error)
+	IncrementOTPAttempts(email string) error
+	ClearOTP(email string) error
+	CreateLoginToken(token *model.LoginToken) error
+	GetLoginToken(token string) (*model.LoginToken, error)
+	DeleteLoginToken(token string) error
+}
+
 type DomainStore interface {
 	CreateDomain(domain *model.Domain) error
 	GetDomain(name string) (*model.Domain, error)
@@ -199,6 +234,7 @@ type Database interface {
 	FilterStore
 	AutoReplyStore
 	ContactStore
+	AuthStore
 	DomainStore
 	OAuthStore
 }
@@ -350,12 +386,16 @@ func (db *DbSQL) CreateUser(username, domain, displayName, passwordHash string) 
 
 func (db *DbSQL) GetUser(username, domain string) (*model.User, error) {
 	u := &model.User{}
-	var createdAt interface{}
+	var createdAt, lastLoginAttempt, twofaEnabled interface{}
 	err := db.Conn.QueryRow(db.Queries[QGetUser], username, domain).
-		Scan(&u.ID, &u.Username, &u.Domain, &u.DisplayName, &u.PasswordHash, &createdAt)
+		Scan(&u.ID, &u.Username, &u.Domain, &u.DisplayName, &u.PasswordHash,
+			&u.Status, &twofaEnabled, &u.TwoFASecret, &u.TwoFABackupCodes,
+			&u.LoginAttempts, &lastLoginAttempt, &createdAt)
 	if err != nil {
 		return nil, err
 	}
+	u.TwoFAEnabled = scanBool(twofaEnabled)
+	u.LastLoginAttempt = scanTime(lastLoginAttempt)
 	u.CreatedAt = scanTime(createdAt)
 	return u, nil
 }
@@ -544,11 +584,15 @@ func (db *DbSQL) scanUsers(rows *sql.Rows) ([]*model.User, error) {
 	var users []*model.User
 	for rows.Next() {
 		u := &model.User{}
-		var createdAt interface{}
-		err := rows.Scan(&u.ID, &u.Username, &u.Domain, &u.DisplayName, &u.PasswordHash, &createdAt)
+		var createdAt, lastLoginAttempt, twofaEnabled interface{}
+		err := rows.Scan(&u.ID, &u.Username, &u.Domain, &u.DisplayName, &u.PasswordHash,
+			&u.Status, &twofaEnabled, &u.TwoFASecret, &u.TwoFABackupCodes,
+			&u.LoginAttempts, &lastLoginAttempt, &createdAt)
 		if err != nil {
 			return nil, err
 		}
+		u.TwoFAEnabled = scanBool(twofaEnabled)
+		u.LastLoginAttempt = scanTime(lastLoginAttempt)
 		u.CreatedAt = scanTime(createdAt)
 		users = append(users, u)
 	}
@@ -859,6 +903,123 @@ func (db *DbSQL) UpdateContact(contact *model.Contact) error {
 
 func (db *DbSQL) DeleteContact(id string) error {
 	_, err := db.Conn.Exec(db.Queries[QDeleteContact], id)
+	return err
+}
+
+// --- Auth / 2FA operations ---
+
+func (db *DbSQL) Enable2FA(email, secret, backupCodes string) error {
+	_, err := db.Conn.Exec(db.Queries[QEnable2FA], secret, backupCodes, email)
+	return err
+}
+
+func (db *DbSQL) Disable2FA(email string) error {
+	_, err := db.Conn.Exec(db.Queries[QDisable2FA], email)
+	return err
+}
+
+func (db *DbSQL) Get2FAStatus(email string) (bool, string, string, error) {
+	var enabled interface{}
+	var secret, backupCodes string
+	err := db.Conn.QueryRow(db.Queries[QGet2FAStatus], email).Scan(&enabled, &secret, &backupCodes)
+	if err != nil {
+		return false, "", "", err
+	}
+	return scanBool(enabled), secret, backupCodes, nil
+}
+
+func (db *DbSQL) CreateTrustedDevice(device *model.TrustedDevice) error {
+	_, err := db.Conn.Exec(db.Queries[QCreateTrustedDevice],
+		device.ID, device.UserEmail, device.Fingerprint, device.Name, db.FormatTime(device.ExpiresAt))
+	return err
+}
+
+func (db *DbSQL) IsTrustedDevice(email, fingerprint string) (bool, error) {
+	var count int
+	err := db.Conn.QueryRow(db.Queries[QIsTrustedDevice], email, fingerprint).Scan(&count)
+	return count > 0, err
+}
+
+func (db *DbSQL) ListTrustedDevices(email string) ([]*model.TrustedDevice, error) {
+	rows, err := db.Conn.Query(db.Queries[QListTrustedDevices], email)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var devices []*model.TrustedDevice
+	for rows.Next() {
+		d := &model.TrustedDevice{}
+		var trustedAt, expiresAt, lastSeenAt interface{}
+		if err := rows.Scan(&d.ID, &d.UserEmail, &d.Fingerprint, &d.Name, &trustedAt, &expiresAt, &lastSeenAt); err != nil {
+			return nil, err
+		}
+		d.TrustedAt = scanTime(trustedAt)
+		d.ExpiresAt = scanTime(expiresAt)
+		d.LastSeenAt = scanTime(lastSeenAt)
+		devices = append(devices, d)
+	}
+	return devices, nil
+}
+
+func (db *DbSQL) RevokeTrustedDevice(id string) error {
+	_, err := db.Conn.Exec(db.Queries[QRevokeTrustedDevice], id)
+	return err
+}
+
+func (db *DbSQL) UpdateDeviceLastSeen(id string) error {
+	_, err := db.Conn.Exec(db.Queries[QUpdateDeviceLastSeen], id)
+	return err
+}
+
+func (db *DbSQL) CreateOTP(otp *model.OTP) error {
+	_, err := db.Conn.Exec(db.Queries[QCreateOTP],
+		otp.ID, otp.UserEmail, otp.Code, otp.Purpose, db.FormatTime(otp.ExpiresAt))
+	return err
+}
+
+func (db *DbSQL) GetOTP(email string) (*model.OTP, error) {
+	o := &model.OTP{}
+	var expiresAt interface{}
+	err := db.Conn.QueryRow(db.Queries[QGetOTP], email).Scan(
+		&o.ID, &o.UserEmail, &o.Code, &o.Purpose, &expiresAt, &o.Attempts)
+	if err != nil {
+		return nil, err
+	}
+	o.ExpiresAt = scanTime(expiresAt)
+	return o, nil
+}
+
+func (db *DbSQL) IncrementOTPAttempts(email string) error {
+	_, err := db.Conn.Exec(db.Queries[QIncrementOTPAttempts], email)
+	return err
+}
+
+func (db *DbSQL) ClearOTP(email string) error {
+	_, err := db.Conn.Exec(db.Queries[QClearOTP], email)
+	return err
+}
+
+func (db *DbSQL) CreateLoginToken(token *model.LoginToken) error {
+	_, err := db.Conn.Exec(db.Queries[QCreateLoginToken],
+		token.Token, token.UserEmail, db.FormatTime(token.ExpiresAt))
+	return err
+}
+
+func (db *DbSQL) GetLoginToken(token string) (*model.LoginToken, error) {
+	t := &model.LoginToken{}
+	var createdAt, expiresAt interface{}
+	err := db.Conn.QueryRow(db.Queries[QGetLoginToken], token).Scan(
+		&t.Token, &t.UserEmail, &createdAt, &expiresAt)
+	if err != nil {
+		return nil, err
+	}
+	t.CreatedAt = scanTime(createdAt)
+	t.ExpiresAt = scanTime(expiresAt)
+	return t, nil
+}
+
+func (db *DbSQL) DeleteLoginToken(token string) error {
+	_, err := db.Conn.Exec(db.Queries[QDeleteLoginToken], token)
 	return err
 }
 

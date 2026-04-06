@@ -1,0 +1,34 @@
+{{define "title-verify_2fa"}}Verify 2FA{{end}}
+{{define "content-verify_2fa"}}
+<div class="login-container">
+    <div class="card">
+        <h2>Two-Factor Authentication</h2>
+        <p style="color:#666;margin-bottom:16px;">Enter your authenticator code or a backup code.</p>
+        {{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+        <form method="POST" action="/verify-2fa">
+            <input type="hidden" name="login_token" value="{{if .OAuthState}}{{.OAuthState}}{{end}}">
+            <div class="form-group">
+                <label for="code">Code</label>
+                <input type="text" id="code" name="code" placeholder="123456" required autofocus autocomplete="one-time-code" inputmode="numeric" pattern="[0-9a-fA-F]*">
+            </div>
+            <div class="form-group">
+                <label><input type="checkbox" name="trust_device" value="true"> Trust this device for 30 days</label>
+            </div>
+            <input type="hidden" name="device_fingerprint" id="device_fingerprint">
+            <input type="hidden" name="device_name" id="device_name">
+            <button type="submit" class="btn" style="width:100%;">Verify</button>
+        </form>
+        <p style="margin-top:12px;font-size:0.85em;color:#888;text-align:center;">
+            <a href="/login">Back to login</a>
+        </p>
+    </div>
+</div>
+<script>
+(function(){
+    try {
+        document.getElementById('device_fingerprint').value = btoa(navigator.userAgent).substring(0, 64);
+        document.getElementById('device_name').value = navigator.platform || 'Unknown';
+    } catch(e) {}
+})();
+</script>
+{{end}}

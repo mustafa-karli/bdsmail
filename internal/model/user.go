@@ -7,12 +7,18 @@ import (
 )
 
 type User struct {
-	ID           int64
-	Username     string // local part (e.g. "alice")
-	Domain       string // domain (e.g. "domain1.com")
-	DisplayName  string // display name (e.g. "Alice Smith")
-	PasswordHash string
-	CreatedAt    time.Time
+	ID               int64
+	Username         string
+	Domain           string
+	DisplayName      string
+	PasswordHash     string
+	Status           string // A=Active, X=Locked, S=Suspended
+	TwoFAEnabled     bool
+	TwoFASecret      string // Base32 TOTP secret
+	TwoFABackupCodes string // Pipe-separated bcrypt hashes
+	LoginAttempts    int
+	LastLoginAttempt time.Time
+	CreatedAt        time.Time
 }
 
 // Email returns the full email address user@domain.
