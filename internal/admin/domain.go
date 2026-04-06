@@ -6,7 +6,6 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"log"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/mustafakarli/bdsmail/config"
 	"github.com/mustafakarli/bdsmail/internal/awsutil"
+	"github.com/mustafakarli/bdsmail/internal/cryptoutil"
 	smtpserver "github.com/mustafakarli/bdsmail/internal/smtp"
 	"github.com/mustafakarli/bdsmail/internal/tlsutil"
 )
@@ -130,10 +130,7 @@ func RegisterDomain(cfg *config.Config, relay *smtpserver.Relay, certReloader *t
 	// Expand TLS certificate
 	expandTLSCert(cfg, certReloader)
 
-	// Persist to .env
-	if err := cfg.PersistDomains(); err != nil {
-		log.Printf("warning: failed to persist domains to .env: %v", err)
-	}
+	// Domain is persisted in the database (domain table), not .env
 
 	return &DomainResult{
 		Domain:       domain,
@@ -162,9 +159,7 @@ func CheckDomainStatus(cfg *config.Config, domain string) (verifyStatus, dkimSta
 }
 
 func generateDomainAPIKey() string {
-	b := make([]byte, 32)
-	rand.Read(b)
-	return hex.EncodeToString(b)
+	return cryptoutil.MustRandomHex(32)
 }
 
 func extractSESRegion(relayHost string) string {

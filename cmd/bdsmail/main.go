@@ -36,7 +36,7 @@ func main() {
 	addDomain := flag.String("adddomain", "", "Add a new domain to the running server (e.g. newdomain.com)")
 	flag.Parse()
 
-	cfg, env := config.Load()
+	cfg := config.Load()
 	ctx := context.Background()
 
 	// Handle adddomain command (talks to running server via admin API)
@@ -95,21 +95,21 @@ func main() {
 	switch cfg.BucketType {
 	case "gcs":
 		var bucketErr error
-		bucket, bucketErr = store.NewGCSBucket(ctx, cfg.GCSBucket)
+		bucket, bucketErr = store.NewBasisGCSBucket(ctx, cfg.GCSBucket)
 		if bucketErr != nil {
 			log.Printf("warning: GCS bucket init failed, attachments disabled: %v", bucketErr)
 		} else {
 			defer bucket.Close()
-			log.Printf("Object storage: GCS bucket %s", cfg.GCSBucket)
+			log.Printf("Object storage: GCS bucket %s (via basis)", cfg.GCSBucket)
 		}
 	case "s3":
 		var bucketErr error
-		bucket, bucketErr = store.NewS3Bucket(ctx, cfg.S3Region, cfg.S3Bucket)
+		bucket, bucketErr = store.NewBasisS3Bucket(cfg.S3Bucket)
 		if bucketErr != nil {
 			log.Printf("warning: S3 bucket init failed, attachments disabled: %v", bucketErr)
 		} else {
 			defer bucket.Close()
-			log.Printf("Object storage: S3 bucket %s", cfg.S3Bucket)
+			log.Printf("Object storage: S3 bucket %s (via basis)", cfg.S3Bucket)
 		}
 	}
 
@@ -120,7 +120,7 @@ func main() {
 	dkimKeys := loadDKIMKeys(cfg.DKIMKeyDir)
 
 	// Initialize security checker
-	secCfg := security.LoadConfig(env)
+	secCfg := security.LoadConfig()
 	var checker *security.Checker
 	if secCfg.AnyEnabled() {
 		var secErr error
@@ -134,7 +134,7 @@ func main() {
 	// Create SMTP relay for outbound delivery
 	relay := smtpserver.NewRelay(dkimKeys, cfg.DKIMSelector, checker)
 	if cfg.RelayHost != "" {
-		relay.SetExternalRelay(cfg.RelayHost, cfg.RelayPort, cfg.RelayUser, cfg.RelayPassword)
+		relay.SetExternalRelay(cfg.RelayHost, fmt.Sprintf("%d", cfg.RelayPort), cfg.RelayUser, cfg.RelayPassword)
 	}
 
 	// Wire TLSRPT send function (breaks circular dep: reporter -> relay)
@@ -223,7 +223,7 @@ func startACMEServer(cfg *config.Config) {
 		http.Redirect(w, r, target, http.StatusMovedPermanently)
 	})
 
-	addr := ":" + cfg.HTTPPort
+	addr := fmt.Sprintf(":%d", cfg.HTTPPort)
 	log.Printf("ACME HTTP server starting on %s", addr)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Printf("ACME HTTP server error: %v", err)
@@ -237,7 +237,7 @@ func handleAddDomain(cfg *config.Config, domain string) {
 		os.Exit(1)
 	}
 
-	url := fmt.Sprintf("https://localhost:%s/admin/api/domains", cfg.HTTPSPort)
+	url := fmt.Sprintf("https://localhost:%d/admin/api/domains", cfg.HTTPSPort)
 
 	body, _ := json.Marshal(map[string]string{"domain": domain})
 	req, err := http.NewRequest("POST", url, bytes.NewReader(body))

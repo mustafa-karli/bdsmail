@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"log"
 	"time"
 
 	"github.com/mustafakarli/bdsmail/internal/model"
@@ -74,6 +75,13 @@ const (
 	QUpdateContact = "update_contact"
 	QDeleteContact = "delete_contact"
 
+	// Domain
+	QCreateDomain       = "create_domain"
+	QGetDomain          = "get_domain"
+	QListDomains        = "list_domains"
+	QUpdateDomainStatus = "update_domain_status"
+	QDeleteDomain       = "delete_domain"
+
 	// OAuth
 	QCreateOAuthClient     = "create_oauth_client"
 	QGetOAuthClient        = "get_oauth_client"
@@ -89,12 +97,9 @@ const (
 	QDeleteExpiredOAuthTokens = "delete_expired_oauth_tokens"
 )
 
-// Database is the interface all database backends implement.
-type Database interface {
-	Close() error
-	GetQueries() map[string]string
+// Focused sub-interfaces following Interface Segregation Principle.
 
-	// User operations
+type UserStore interface {
 	CreateUser(username, domain, displayName, passwordHash string) error
 	GetUser(username, domain string) (*model.User, error)
 	GetUserByEmail(email string) (*model.User, error)
@@ -103,8 +108,9 @@ type Database interface {
 	ListUsersByDomain(domain string) ([]*model.User, error)
 	UpdateUser(email, displayName, passwordHash string) error
 	DeleteUser(email string) error
+}
 
-	// Message operations
+type MessageStore interface {
 	SaveMessage(msg *model.Message) error
 	ListMessages(ownerEmail, folder string) ([]*model.Message, error)
 	ListAllMessages(ownerEmail string) ([]*model.Message, error)
@@ -116,16 +122,18 @@ type Database interface {
 	SearchMessages(ownerEmail, query string) ([]*model.Message, error)
 	ListUserFolders(ownerEmail string) ([]string, error)
 	CountUnread(ownerEmail, folder string) int
+}
 
-	// Alias operations
+type AliasStore interface {
 	CreateAlias(aliasEmail string, targetEmails []string) error
 	GetAlias(aliasEmail string) ([]string, error)
 	ListAliases() ([]*model.Alias, error)
 	UpdateAlias(aliasEmail string, targetEmails []string) error
 	DeleteAlias(aliasEmail string) error
 	GetCatchAll(domain string) ([]string, error)
+}
 
-	// Mailing list operations
+type MailingListStore interface {
 	CreateMailingList(listAddr, name, description, ownerEmail string) error
 	GetMailingList(listAddr string) (*model.MailingList, error)
 	ListMailingLists() ([]*model.MailingList, error)
@@ -134,31 +142,43 @@ type Database interface {
 	RemoveListMember(listAddr, memberEmail string) error
 	GetListMembers(listAddr string) ([]string, error)
 	IsMailingList(email string) bool
+}
 
-	// Filter operations
+type FilterStore interface {
 	CreateFilter(filter *model.Filter) error
 	ListFilters(userEmail string) ([]*model.Filter, error)
 	UpdateFilter(filter *model.Filter) error
 	DeleteFilter(id string) error
+}
 
-	// Auto-reply operations
+type AutoReplyStore interface {
 	SetAutoReply(reply *model.AutoReply) error
 	GetAutoReply(userEmail string) (*model.AutoReply, error)
 	DeleteAutoReply(userEmail string) error
 	RecordAutoReplySent(userEmail, senderEmail string) error
 	HasAutoRepliedRecently(userEmail, senderEmail string, cooldown time.Duration) bool
+}
 
-	// Contact operations
+type ContactStore interface {
 	CreateContact(contact *model.Contact) error
 	GetContact(id string) (*model.Contact, error)
 	ListContacts(ownerEmail string) ([]*model.Contact, error)
 	UpdateContact(contact *model.Contact) error
 	DeleteContact(id string) error
+}
 
-	// OAuth operations
+type DomainStore interface {
+	CreateDomain(domain *model.Domain) error
+	GetDomain(name string) (*model.Domain, error)
+	ListDomains() ([]*model.Domain, error)
+	UpdateDomainStatus(name, sesStatus, dkimStatus string) error
+	DeleteDomain(name string) error
+}
+
+type OAuthStore interface {
 	CreateOAuthClient(client *model.OAuthClient) error
 	GetOAuthClient(clientID string) (*model.OAuthClient, error)
-	ListOAuthClients(ownerEmail string) ([]*model.OAuthClient, error)
+	ListOAuthClients(domain string) ([]*model.OAuthClient, error)
 	DeleteOAuthClient(id string) error
 	CreateOAuthCode(code *model.OAuthCode) error
 	GetOAuthCode(code string) (*model.OAuthCode, error)
@@ -166,6 +186,21 @@ type Database interface {
 	CreateOAuthToken(token *model.OAuthToken) error
 	GetOAuthToken(token string) (*model.OAuthToken, error)
 	DeleteOAuthToken(token string) error
+}
+
+// Database composes all sub-interfaces. Backends implement the full interface.
+type Database interface {
+	Close() error
+	GetQueries() map[string]string
+	UserStore
+	MessageStore
+	AliasStore
+	MailingListStore
+	FilterStore
+	AutoReplyStore
+	ContactStore
+	DomainStore
+	OAuthStore
 }
 
 // NoSQL document structs — shared by DynamoDB and Firestore via dual tags.
@@ -211,8 +246,7 @@ func (b *DbBase) docUserToModel(du *docUser) *model.User {
 
 func (b *DbBase) docMessageToModel(dm *docMessage) *model.Message {
 	receivedAt, _ := time.Parse(time.RFC3339, dm.ReceivedAt)
-	var attachments []model.Attachment
-	json.Unmarshal([]byte(dm.Attachments), &attachments)
+	attachments := b.UnmarshalAttachments(dm.Attachments)
 	return &model.Message{
 		ID:          dm.ID,
 		MessageID:   dm.MessageID,
@@ -233,34 +267,45 @@ func (b *DbBase) docMessageToModel(dm *docMessage) *model.Message {
 	}
 }
 
+// DbBase contains shared helper methods used by all database backends.
+type DbBase struct{}
+
+func (b *DbBase) MarshalJSON(v any) string {
+	data, err := json.Marshal(v)
+	if err != nil {
+		log.Printf("json marshal error: %v", err)
+		return "[]"
+	}
+	return string(data)
+}
+
 func (b *DbBase) MarshalAttachments(attachments []model.Attachment) string {
 	if attachments == nil {
 		attachments = []model.Attachment{}
 	}
-	data, _ := json.Marshal(attachments)
-	return string(data)
+	return b.MarshalJSON(attachments)
 }
 
 func (b *DbBase) UnmarshalAttachments(s string) []model.Attachment {
 	var attachments []model.Attachment
-	json.Unmarshal([]byte(s), &attachments)
+	if err := json.Unmarshal([]byte(s), &attachments); err != nil {
+		log.Printf("unmarshal attachments error: %v", err)
+	}
 	return attachments
 }
-
-// DbBase contains shared helper methods used by all database backends.
-type DbBase struct{}
 
 func (b *DbBase) MarshalAddrs(addrs []string) string {
 	if addrs == nil {
 		addrs = []string{}
 	}
-	data, _ := json.Marshal(addrs)
-	return string(data)
+	return b.MarshalJSON(addrs)
 }
 
 func (b *DbBase) UnmarshalAddrs(s string) []string {
 	var addrs []string
-	json.Unmarshal([]byte(s), &addrs)
+	if err := json.Unmarshal([]byte(s), &addrs); err != nil {
+		log.Printf("unmarshal addrs error: %v", err)
+	}
 	if addrs == nil {
 		return []string{}
 	}
@@ -479,10 +524,7 @@ func (db *DbSQL) ListUsersByDomain(domain string) ([]*model.User, error) {
 
 func (db *DbSQL) UpdateUser(email, displayName, passwordHash string) error {
 	username, domain := SplitEmail(email)
-	if passwordHash == "" {
-		_, err := db.Conn.Exec("UPDATE users SET display_name = ? WHERE username = ? AND domain = ?", displayName, username, domain)
-		return err
-	}
+	// QUpdateUser always sets both display_name and password_hash
 	_, err := db.Conn.Exec(db.Queries[QUpdateUser], displayName, passwordHash, username, domain)
 	return err
 }
@@ -820,12 +862,62 @@ func (db *DbSQL) DeleteContact(id string) error {
 	return err
 }
 
+// --- Domain operations ---
+
+func (db *DbSQL) CreateDomain(domain *model.Domain) error {
+	_, err := db.Conn.Exec(db.Queries[QCreateDomain],
+		domain.Name, domain.APIKeyHash, domain.SESStatus, domain.DKIMStatus,
+		domain.Status, domain.CreatedBy)
+	return err
+}
+
+func (db *DbSQL) GetDomain(name string) (*model.Domain, error) {
+	d := &model.Domain{}
+	var createdAt interface{}
+	err := db.Conn.QueryRow(db.Queries[QGetDomain], name).Scan(
+		&d.Name, &d.APIKeyHash, &d.SESStatus, &d.DKIMStatus, &d.Status, &d.CreatedBy, &createdAt)
+	if err != nil {
+		return nil, err
+	}
+	d.CreatedAt = scanTime(createdAt)
+	return d, nil
+}
+
+func (db *DbSQL) ListDomains() ([]*model.Domain, error) {
+	rows, err := db.Conn.Query(db.Queries[QListDomains])
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var domains []*model.Domain
+	for rows.Next() {
+		d := &model.Domain{}
+		var createdAt interface{}
+		if err := rows.Scan(&d.Name, &d.APIKeyHash, &d.SESStatus, &d.DKIMStatus, &d.Status, &d.CreatedBy, &createdAt); err != nil {
+			return nil, err
+		}
+		d.CreatedAt = scanTime(createdAt)
+		domains = append(domains, d)
+	}
+	return domains, nil
+}
+
+func (db *DbSQL) UpdateDomainStatus(name, sesStatus, dkimStatus string) error {
+	_, err := db.Conn.Exec(db.Queries[QUpdateDomainStatus], sesStatus, dkimStatus, name)
+	return err
+}
+
+func (db *DbSQL) DeleteDomain(name string) error {
+	_, err := db.Conn.Exec(db.Queries[QDeleteDomain], name)
+	return err
+}
+
 // --- OAuth operations ---
 
 func (db *DbSQL) CreateOAuthClient(client *model.OAuthClient) error {
 	_, err := db.Conn.Exec(db.Queries[QCreateOAuthClient],
 		client.ID, client.Name, client.ClientID, client.SecretHash,
-		client.RedirectURI, client.OwnerEmail)
+		client.RedirectURI, client.Domain, client.CreatedBy)
 	return err
 }
 
@@ -833,7 +925,7 @@ func (db *DbSQL) GetOAuthClient(clientID string) (*model.OAuthClient, error) {
 	c := &model.OAuthClient{}
 	var createdAt interface{}
 	err := db.Conn.QueryRow(db.Queries[QGetOAuthClient], clientID).Scan(
-		&c.ID, &c.Name, &c.ClientID, &c.SecretHash, &c.RedirectURI, &c.OwnerEmail, &createdAt)
+		&c.ID, &c.Name, &c.ClientID, &c.SecretHash, &c.RedirectURI, &c.Domain, &c.CreatedBy, &createdAt)
 	if err != nil {
 		return nil, err
 	}
@@ -841,8 +933,8 @@ func (db *DbSQL) GetOAuthClient(clientID string) (*model.OAuthClient, error) {
 	return c, nil
 }
 
-func (db *DbSQL) ListOAuthClients(ownerEmail string) ([]*model.OAuthClient, error) {
-	rows, err := db.Conn.Query(db.Queries[QListOAuthClients], ownerEmail)
+func (db *DbSQL) ListOAuthClients(domain string) ([]*model.OAuthClient, error) {
+	rows, err := db.Conn.Query(db.Queries[QListOAuthClients], domain)
 	if err != nil {
 		return nil, err
 	}
@@ -851,7 +943,7 @@ func (db *DbSQL) ListOAuthClients(ownerEmail string) ([]*model.OAuthClient, erro
 	for rows.Next() {
 		c := &model.OAuthClient{}
 		var createdAt interface{}
-		if err := rows.Scan(&c.ID, &c.Name, &c.ClientID, &c.SecretHash, &c.RedirectURI, &c.OwnerEmail, &createdAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.ClientID, &c.SecretHash, &c.RedirectURI, &c.Domain, &c.CreatedBy, &createdAt); err != nil {
 			return nil, err
 		}
 		c.CreatedAt = scanTime(createdAt)

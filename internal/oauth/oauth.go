@@ -1,23 +1,22 @@
 package oauth
 
 import (
-	"crypto/rand"
 	"crypto"
+	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
 	"math/big"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/mustafakarli/bdsmail/internal/cryptoutil"
 	"github.com/mustafakarli/bdsmail/internal/model"
 	"github.com/mustafakarli/bdsmail/internal/store"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // Handler implements OAuth 2.0 + OpenID Connect provider endpoints.
@@ -25,51 +24,19 @@ type Handler struct {
 	db         store.Database
 	signingKey *rsa.PrivateKey
 	keyID      string
-	issuer     string // e.g. "https://mail.yourdomain.com"
+	issuer     string
 }
 
-func NewHandler(db store.Database, issuer string) *Handler {
+// NewHandler creates a new OAuth/OIDC handler. Returns error instead of fatal.
+func NewHandler(db store.Database, issuer string) (*Handler, error) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		log.Fatalf("failed to generate RSA signing key: %v", err)
+		return nil, fmt.Errorf("RSA key generation failed: %w", err)
 	}
-	// Deterministic key ID from public key
 	pubBytes := key.PublicKey.N.Bytes()
 	hash := sha256.Sum256(pubBytes)
 	kid := hex.EncodeToString(hash[:8])
-
-	return &Handler{db: db, signingKey: key, keyID: kid, issuer: issuer}
-}
-
-// --- Token generation helpers ---
-
-func generateCode() string {
-	b := make([]byte, 32)
-	rand.Read(b)
-	return hex.EncodeToString(b)
-}
-
-func generateToken() string {
-	b := make([]byte, 32)
-	rand.Read(b)
-	return hex.EncodeToString(b)
-}
-
-func generateClientID() string {
-	b := make([]byte, 16)
-	rand.Read(b)
-	return hex.EncodeToString(b)
-}
-
-func generateClientSecret() string {
-	b := make([]byte, 32)
-	rand.Read(b)
-	return hex.EncodeToString(b)
-}
-
-func hashSecret(secret string) string {
-	hash, _ := bcrypt.GenerateFromPassword([]byte(secret), bcrypt.DefaultCost)
-	return string(hash)
+	return &Handler{db: db, signingKey: key, keyID: kid, issuer: issuer}, nil
 }
 
 // --- Client Registration (for developer portal) ---
@@ -87,17 +54,32 @@ type NewClientResponse struct {
 	ClientSecret string `json:"clientSecret"` // Only shown once at creation
 }
 
-func (h *Handler) RegisterClient(name, redirectURI, ownerEmail string) (*NewClientResponse, error) {
-	clientID := generateClientID()
-	clientSecret := generateClientSecret()
+func (h *Handler) RegisterClient(name, redirectURI, domain, createdBy string) (*NewClientResponse, error) {
+	clientID, err := cryptoutil.RandomHex(16)
+	if err != nil {
+		return nil, fmt.Errorf("generate client_id: %w", err)
+	}
+	clientSecret, err := cryptoutil.RandomHex(32)
+	if err != nil {
+		return nil, fmt.Errorf("generate client_secret: %w", err)
+	}
+	id, err := cryptoutil.RandomHex(32)
+	if err != nil {
+		return nil, fmt.Errorf("generate id: %w", err)
+	}
+	secretHash, err := cryptoutil.HashSecret(clientSecret)
+	if err != nil {
+		return nil, fmt.Errorf("hash secret: %w", err)
+	}
 
 	client := &model.OAuthClient{
-		ID:          generateToken(),
+		ID:          id,
 		Name:        name,
 		ClientID:    clientID,
-		SecretHash:  hashSecret(clientSecret),
+		SecretHash:  secretHash,
 		RedirectURI: redirectURI,
-		OwnerEmail:  ownerEmail,
+		Domain:      domain,
+		CreatedBy:   createdBy,
 	}
 	if err := h.db.CreateOAuthClient(client); err != nil {
 		return nil, err
@@ -111,8 +93,8 @@ func (h *Handler) RegisterClient(name, redirectURI, ownerEmail string) (*NewClie
 	}, nil
 }
 
-func (h *Handler) ListClients(ownerEmail string) ([]ClientInfo, error) {
-	clients, err := h.db.ListOAuthClients(ownerEmail)
+func (h *Handler) ListClients(domain string) ([]ClientInfo, error) {
+	clients, err := h.db.ListOAuthClients(domain)
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +164,10 @@ func (h *Handler) ValidateAuthorize(r *http.Request) (*AuthorizeParams, error) {
 
 // IssueCode creates an authorization code after user consent.
 func (h *Handler) IssueCode(clientID, userEmail, redirectURI, scope, nonce string) (string, error) {
-	code := generateCode()
+	code, err := cryptoutil.RandomHex(32)
+	if err != nil {
+		return "", fmt.Errorf("generate auth code: %w", err)
+	}
 	oauthCode := &model.OAuthCode{
 		Code: code, ClientID: clientID, UserEmail: userEmail,
 		RedirectURI: redirectURI, Scope: scope, Nonce: nonce,
@@ -251,7 +236,11 @@ func (h *Handler) HandleToken(w http.ResponseWriter, r *http.Request) {
 	h.db.MarkOAuthCodeUsed(code)
 
 	// Issue access token
-	accessToken := generateToken()
+	accessToken, err := cryptoutil.RandomHex(32)
+	if err != nil {
+		jsonErr(w, 500, "server_error", "token generation failed")
+		return
+	}
 	expiresIn := 3600 // 1 hour
 	h.db.CreateOAuthToken(&model.OAuthToken{
 		Token: accessToken, ClientID: clientID, UserEmail: oauthCode.UserEmail,

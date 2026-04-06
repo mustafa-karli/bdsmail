@@ -15,6 +15,7 @@ import (
 	"github.com/mustafakarli/bdsmail/config"
 	"github.com/mustafakarli/bdsmail/internal/mimeutil"
 	"github.com/mustafakarli/bdsmail/internal/model"
+	"github.com/mustafakarli/bdsmail/internal/oauth"
 	"github.com/mustafakarli/bdsmail/internal/security"
 	"github.com/mustafakarli/bdsmail/internal/smtp"
 	"github.com/mustafakarli/bdsmail/internal/store"
@@ -33,38 +34,38 @@ func NewHandlers(s *store.Store, relay *smtp.Relay, sessions *SessionStore, cfg 
 }
 
 type pageData struct {
-	Username        string      // local part (e.g. "alice")
-	DisplayName     string      // display name (e.g. "Alice Smith")
-	Email           string      // full email (e.g. "alice@domain1.com")
-	Domain          string      // current domain
-	Error           string
-	Success         string
-	Folder          string
-	Folders         []string    // all user folders for nav tabs
-	Messages        interface{}
-	Message         interface{}
-	FormTo          string
-	FormCC          string
-	FormBCC         string
-	FormSubject     string
-	FormBody        string
-	FormContentType string
-	SearchQuery     string
-	Filters         interface{}
-	AutoReply       *model.AutoReply
-	Contacts        []contactView
-	UnreadCount     int
-	Page            int
-	TotalPages      int
-	// OAuth
-	OAuthClients    interface{}
-	OAuthClientID   string
-	OAuthClientName string
+	Username         string
+	DisplayName      string
+	Email            string
+	Domain           string
+	Error            string
+	Success          string
+	Folder           string
+	Folders          []string
+	Messages         []*model.Message
+	Message          *model.Message
+	FormTo           string
+	FormCC           string
+	FormBCC          string
+	FormSubject      string
+	FormBody         string
+	FormContentType  string
+	SearchQuery      string
+	Filters          []*model.Filter
+	AutoReply        *model.AutoReply
+	Contacts         []contactView
+	UnreadCount      int
+	Page             int
+	TotalPages       int
+	OAuthClients     []oauth.ClientInfo
+	OAuthClientID    string
+	OAuthClientName  string
 	OAuthRedirectURI string
-	OAuthScope      string
-	OAuthState      string
-	OAuthNonce      string
-	NewClient       interface{}
+	OAuthScope       string
+	OAuthState       string
+	OAuthNonce       string
+	NewClient        *oauth.NewClientResponse
+	AdminData        any // admin page-specific data (domains, users, aliases, lists)
 }
 
 type contactView struct {
@@ -194,56 +195,32 @@ func paginateMessages(messages []*model.Message, page int) ([]*model.Message, in
 }
 
 func (h *Handlers) HandleInbox(w http.ResponseWriter, r *http.Request, tmpl templateRenderer) {
-	email, ok := h.requireAuth(w, r)
-	if !ok {
-		return
-	}
-
-	pd := h.userPageData(email)
-
-	messages, err := h.store.DB.ListMessages(email, "INBOX")
-	if err != nil {
-		log.Printf("error listing messages: %v", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-
-	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-	paged, currentPage, totalPages := paginateMessages(messages, page)
-
-	pd.Folder = "INBOX"
-	pd.Messages = paged
-	pd.Page = currentPage
-	pd.TotalPages = totalPages
-	folders, _ := h.store.DB.ListUserFolders(email)
-	pd.Folders = folders
-	tmpl.render(w, "layout", pd)
+	h.handleFolderView(w, r, tmpl, "INBOX")
 }
 
 func (h *Handlers) HandleSent(w http.ResponseWriter, r *http.Request, tmpl templateRenderer) {
+	h.handleFolderView(w, r, tmpl, "Sent")
+}
+
+func (h *Handlers) handleFolderView(w http.ResponseWriter, r *http.Request, tmpl templateRenderer, folder string) {
 	email, ok := h.requireAuth(w, r)
 	if !ok {
 		return
 	}
-
 	pd := h.userPageData(email)
-
-	messages, err := h.store.DB.ListMessages(email, "Sent")
+	messages, err := h.store.DB.ListMessages(email, folder)
 	if err != nil {
-		log.Printf("error listing sent messages: %v", err)
+		log.Printf("error listing messages for folder %s: %v", folder, err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
-
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	paged, currentPage, totalPages := paginateMessages(messages, page)
-
-	pd.Folder = "Sent"
+	pd.Folder = folder
 	pd.Messages = paged
 	pd.Page = currentPage
 	pd.TotalPages = totalPages
-	folders, _ := h.store.DB.ListUserFolders(email)
-	pd.Folders = folders
+	pd.Folders, _ = h.store.DB.ListUserFolders(email)
 	tmpl.render(w, "layout", pd)
 }
 
@@ -698,32 +675,11 @@ func (h *Handlers) HandleSearch(w http.ResponseWriter, r *http.Request, tmpl tem
 // --- Folder view ---
 
 func (h *Handlers) HandleFolder(w http.ResponseWriter, r *http.Request, tmpl templateRenderer) {
-	email, ok := h.requireAuth(w, r)
-	if !ok {
-		return
-	}
-	pd := h.userPageData(email)
-
 	folder := strings.TrimPrefix(r.URL.Path, "/folder/")
 	if folder == "" {
 		folder = "INBOX"
 	}
-
-	messages, err := h.store.DB.ListMessages(email, folder)
-	if err != nil {
-		log.Printf("error listing messages for folder %s: %v", folder, err)
-	}
-
-	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-	paged, currentPage, totalPages := paginateMessages(messages, page)
-
-	pd.Folder = folder
-	folders, _ := h.store.DB.ListUserFolders(email)
-	pd.Folders = folders
-	pd.Messages = paged
-	pd.Page = currentPage
-	pd.TotalPages = totalPages
-	tmpl.render(w, "layout", pd)
+	h.handleFolderView(w, r, tmpl, folder)
 }
 
 // --- vCard helpers ---

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/mustafakarli/bdsmail/internal/mimeutil"
 	"github.com/mustafakarli/bdsmail/internal/model"
+	"github.com/mustafa-karli/basis/common"
 	oauthpkg "github.com/mustafakarli/bdsmail/internal/oauth"
 	"github.com/mustafakarli/bdsmail/internal/store"
 )
@@ -36,9 +36,7 @@ func jsonOK(w http.ResponseWriter, v any) {
 }
 
 func jsonError(w http.ResponseWriter, code int, msg string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	common.WriteError(w, code, http.StatusText(code), msg)
 }
 
 func (a *APIHandlers) requireAuth(w http.ResponseWriter, r *http.Request) (string, bool) {
@@ -672,7 +670,8 @@ func (a *APIHandlers) HandleOAuthClients(w http.ResponseWriter, r *http.Request)
 			RedirectUri string `json:"redirectUri"`
 		}
 		json.NewDecoder(r.Body).Decode(&body)
-		client, err := a.oauth.RegisterClient(body.Name, body.RedirectUri, email)
+		_, domain := store.SplitEmail(email)
+		client, err := a.oauth.RegisterClient(body.Name, body.RedirectUri, domain, email)
 		if err != nil {
 			jsonError(w, 500, "Failed to register: "+err.Error())
 			return
@@ -689,5 +688,3 @@ func (a *APIHandlers) HandleOAuthClients(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-// Silence the unused import warning for net
-var _ = net.IP{}

@@ -5,6 +5,7 @@ import (
 	"net/url"
 
 	"github.com/mustafakarli/bdsmail/internal/oauth"
+	"github.com/mustafakarli/bdsmail/internal/store"
 )
 
 // OAuthWebHandlers handles the web UI portions of OAuth (consent screen, developer portal).
@@ -31,7 +32,8 @@ func (o *OAuthWebHandlers) HandleDeveloper(w http.ResponseWriter, r *http.Reques
 		case "create":
 			name := r.FormValue("name")
 			redirectURI := r.FormValue("redirect_uri")
-			client, err := o.oauth.RegisterClient(name, redirectURI, email)
+			_, domain := store.SplitEmail(email)
+			client, err := o.oauth.RegisterClient(name, redirectURI, domain, email)
 			if err != nil {
 				pd.Error = "Failed to register app: " + err.Error()
 			} else {

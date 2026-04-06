@@ -29,7 +29,7 @@ func NewServer(cfg *config.Config, s *store.Store, certReloader *tlsutil.CertRel
 }
 
 func (s *Server) Start() error {
-	addr := ":" + s.cfg.POP3Port
+	addr := fmt.Sprintf(":%d", s.cfg.POP3Port)
 	log.Printf("POP3 server starting on %s", addr)
 
 	var err error

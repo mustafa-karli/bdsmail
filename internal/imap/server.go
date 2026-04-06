@@ -30,7 +30,7 @@ func NewServer(cfg *config.Config, s *store.Store, certReloader *tlsutil.CertRel
 }
 
 func (s *Server) Start() error {
-	addr := ":" + s.cfg.IMAPPort
+	addr := fmt.Sprintf(":%d", s.cfg.IMAPPort)
 	log.Printf("IMAP server starting on %s", addr)
 
 	var err error

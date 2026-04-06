@@ -21,62 +21,13 @@ func NewStore(db Database, bucket ObjectStore) *Store {
 	return &Store{DB: db, Bucket: bucket}
 }
 
-// SaveIncomingMail stores a received message for all local recipients.
-// attachments are saved to the bucket if available.
-func (s *Store) SaveIncomingMail(ctx context.Context, from string, to, cc, bcc []string, subject, contentType, body, folder string, parsedAttachments []mimeutil.ParsedAttachment) error {
-	if folder == "" {
-		folder = "INBOX"
-	}
-	allRecipients := s.collectLocalRecipients(to, cc, bcc)
+// newMessage creates a Message with common fields populated.
+func newMessage(from string, to, cc, bcc []string, subject, contentType, body, ownerUser, folder string, seen bool, attachments []model.Attachment) *model.Message {
 	_, senderDomain := SplitEmail(from)
-
-	for _, email := range allRecipients {
-		msgID := uuid.New().String()
-
-		// Save attachments to bucket
-		attachments, err := s.saveAttachments(ctx, msgID, parsedAttachments)
-		if err != nil {
-			log.Printf("warning: failed to save attachments for %s: %v", msgID, err)
-		}
-
-		msg := &model.Message{
-			ID:          msgID,
-			MessageID:   fmt.Sprintf("<%s@%s>", msgID, senderDomain),
-			From:        from,
-			To:          to,
-			CC:          cc,
-			BCC:         []string{},
-			Subject:     subject,
-			ContentType: contentType,
-			Body:        body,
-			Attachments: attachments,
-			OwnerUser:   email,
-			Folder:      folder,
-			Seen:        false,
-			ReceivedAt:  time.Now().UTC(),
-		}
-		if err := s.DB.SaveMessage(msg); err != nil {
-			return fmt.Errorf("failed to save message: %w", err)
-		}
-	}
-	return nil
-}
-
-// SaveOutgoingMail stores a sent message and delivers to local recipients.
-func (s *Store) SaveOutgoingMail(ctx context.Context, senderEmail, from string, to, cc, bcc []string, subject, contentType, body string, parsedAttachments []mimeutil.ParsedAttachment) (string, error) {
-	msgID := uuid.New().String()
-	_, senderDomain := SplitEmail(senderEmail)
-
-	// Save attachments to bucket
-	attachments, err := s.saveAttachments(ctx, msgID, parsedAttachments)
-	if err != nil {
-		log.Printf("warning: failed to save attachments for %s: %v", msgID, err)
-	}
-
-	// Save sender's copy in Sent folder
-	msg := &model.Message{
-		ID:          msgID,
-		MessageID:   fmt.Sprintf("<%s@%s>", msgID, senderDomain),
+	id := uuid.New().String()
+	return &model.Message{
+		ID:          id,
+		MessageID:   fmt.Sprintf("<%s@%s>", id, senderDomain),
 		From:        from,
 		To:          to,
 		CC:          cc,
@@ -85,74 +36,61 @@ func (s *Store) SaveOutgoingMail(ctx context.Context, senderEmail, from string, 
 		ContentType: contentType,
 		Body:        body,
 		Attachments: attachments,
-		OwnerUser:   senderEmail,
-		Folder:      "Sent",
-		Seen:        true,
-		ReceivedAt:  time.Now().UTC(),
-	}
-	if err := s.DB.SaveMessage(msg); err != nil {
-		return "", fmt.Errorf("failed to save sent message: %w", err)
-	}
-
-	// Deliver to local recipients
-	localRecipients := s.collectLocalRecipients(to, cc, bcc)
-	for _, email := range localRecipients {
-		localMsgID := uuid.New().String()
-
-		// Save separate attachment copies for local recipients
-		localAttachments, _ := s.saveAttachments(ctx, localMsgID, parsedAttachments)
-
-		localMsg := &model.Message{
-			ID:          localMsgID,
-			MessageID:   msg.MessageID,
-			From:        from,
-			To:          to,
-			CC:          cc,
-			BCC:         []string{},
-			Subject:     subject,
-			ContentType: contentType,
-			Body:        body,
-			Attachments: localAttachments,
-			OwnerUser:   email,
-			Folder:      "INBOX",
-			Seen:        false,
-			ReceivedAt:  time.Now().UTC(),
-		}
-		if err := s.DB.SaveMessage(localMsg); err != nil {
-			return "", fmt.Errorf("failed to save local delivery: %w", err)
-		}
-	}
-
-	return msg.MessageID, nil
-}
-
-// SaveIncomingMailForUser stores a message for a single resolved recipient with per-user folder/seen.
-func (s *Store) SaveIncomingMailForUser(ctx context.Context, ownerEmail, from string, to, cc []string, subject, contentType, body, folder string, seen bool, parsedAttachments []mimeutil.ParsedAttachment) error {
-	msgID := uuid.New().String()
-	_, senderDomain := SplitEmail(from)
-
-	attachments, err := s.saveAttachments(ctx, msgID, parsedAttachments)
-	if err != nil {
-		log.Printf("warning: failed to save attachments for %s: %v", msgID, err)
-	}
-
-	msg := &model.Message{
-		ID:          msgID,
-		MessageID:   fmt.Sprintf("<%s@%s>", msgID, senderDomain),
-		From:        from,
-		To:          to,
-		CC:          cc,
-		BCC:         []string{},
-		Subject:     subject,
-		ContentType: contentType,
-		Body:        body,
-		Attachments: attachments,
-		OwnerUser:   ownerEmail,
+		OwnerUser:   ownerUser,
 		Folder:      folder,
 		Seen:        seen,
 		ReceivedAt:  time.Now().UTC(),
 	}
-	return s.DB.SaveMessage(msg)
+}
+
+// saveAndDeliver creates a message, saves attachments, and persists it.
+func (s *Store) saveAndDeliver(ctx context.Context, from string, to, cc, bcc []string, subject, contentType, body, ownerUser, folder string, seen bool, parsedAttachments []mimeutil.ParsedAttachment) (string, error) {
+	msg := newMessage(from, to, cc, bcc, subject, contentType, body, ownerUser, folder, seen, nil)
+	attachments, err := s.saveAttachments(ctx, msg.ID, parsedAttachments)
+	if err != nil {
+		log.Printf("warning: failed to save attachments for %s: %v", msg.ID, err)
+	}
+	msg.Attachments = attachments
+	if err := s.DB.SaveMessage(msg); err != nil {
+		return "", fmt.Errorf("save message for %s: %w", ownerUser, err)
+	}
+	return msg.MessageID, nil
+}
+
+// SaveIncomingMail stores a received message for all local recipients.
+func (s *Store) SaveIncomingMail(ctx context.Context, from string, to, cc, bcc []string, subject, contentType, body, folder string, parsedAttachments []mimeutil.ParsedAttachment) error {
+	if folder == "" {
+		folder = "INBOX"
+	}
+	for _, email := range s.collectLocalRecipients(to, cc, bcc) {
+		if _, err := s.saveAndDeliver(ctx, from, to, cc, []string{}, subject, contentType, body, email, folder, false, parsedAttachments); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SaveOutgoingMail stores a sent message and delivers to local recipients.
+func (s *Store) SaveOutgoingMail(ctx context.Context, senderEmail, from string, to, cc, bcc []string, subject, contentType, body string, parsedAttachments []mimeutil.ParsedAttachment) (string, error) {
+	// Save sender's copy in Sent folder
+	messageID, err := s.saveAndDeliver(ctx, from, to, cc, bcc, subject, contentType, body, senderEmail, "Sent", true, parsedAttachments)
+	if err != nil {
+		return "", err
+	}
+
+	// Deliver to local recipients
+	for _, email := range s.collectLocalRecipients(to, cc, bcc) {
+		if _, err := s.saveAndDeliver(ctx, from, to, cc, []string{}, subject, contentType, body, email, "INBOX", false, parsedAttachments); err != nil {
+			return "", err
+		}
+	}
+	return messageID, nil
+}
+
+// SaveIncomingMailForUser stores a message for a single resolved recipient with per-user folder/seen.
+func (s *Store) SaveIncomingMailForUser(ctx context.Context, ownerEmail, from string, to, cc []string, subject, contentType, body, folder string, seen bool, parsedAttachments []mimeutil.ParsedAttachment) error {
+	_, err := s.saveAndDeliver(ctx, from, to, cc, []string{}, subject, contentType, body, ownerEmail, folder, seen, parsedAttachments)
+	return err
 }
 
 // ProcessAutoReply checks and sends an auto-reply if configured for the recipient.
@@ -323,48 +261,23 @@ func (s *Store) ResolveRecipient(email string, depth int) []string {
 func (s *Store) DistributeToList(ctx context.Context, listAddr, from string, to, cc, bcc []string, subject, contentType, body string, parsedAttachments []mimeutil.ParsedAttachment) error {
 	members, err := s.DB.GetListMembers(listAddr)
 	if err != nil {
-		return fmt.Errorf("failed to get list members: %w", err)
+		return fmt.Errorf("get list members: %w", err)
 	}
-
 	list, err := s.DB.GetMailingList(listAddr)
 	if err != nil {
-		return fmt.Errorf("failed to get mailing list: %w", err)
+		return fmt.Errorf("get mailing list: %w", err)
 	}
 
-	// Add List-Id and List-Unsubscribe headers to subject metadata
 	listSubject := subject
 	if list.Name != "" && !strings.Contains(subject, "["+list.Name+"]") {
 		listSubject = "[" + list.Name + "] " + subject
 	}
 
 	for _, member := range members {
-		if member == from {
-			continue // don't deliver back to sender
-		}
-		if !s.DB.UserExistsByEmail(member) {
+		if member == from || !s.DB.UserExistsByEmail(member) {
 			continue
 		}
-		msgID := uuid.New().String()
-		_, senderDomain := SplitEmail(from)
-		attachments, _ := s.saveAttachments(ctx, msgID, parsedAttachments)
-
-		msg := &model.Message{
-			ID:          msgID,
-			MessageID:   fmt.Sprintf("<%s@%s>", msgID, senderDomain),
-			From:        from,
-			To:          []string{listAddr},
-			CC:          []string{},
-			BCC:         []string{},
-			Subject:     listSubject,
-			ContentType: contentType,
-			Body:        body,
-			Attachments: attachments,
-			OwnerUser:   member,
-			Folder:      "INBOX",
-			Seen:        false,
-			ReceivedAt:  time.Now().UTC(),
-		}
-		if err := s.DB.SaveMessage(msg); err != nil {
+		if _, err := s.saveAndDeliver(ctx, from, []string{listAddr}, []string{}, []string{}, listSubject, contentType, body, member, "INBOX", false, parsedAttachments); err != nil {
 			log.Printf("failed to distribute to %s: %v", member, err)
 		}
 	}

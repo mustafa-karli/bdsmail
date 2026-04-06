@@ -124,4 +124,34 @@ bdsmail includes a built-in OAuth 2.0 / OpenID Connect identity provider — "Si
 ### Supported on
 
 - PostgreSQL and SQLite backends (full support)
-- DynamoDB and Firestore (not yet implemented — returns error)
+- DynamoDB and Firestore (full support)
+
+---
+
+## Shared Library (basis)
+
+bdsmail reuses `github.com/mustafa-karli/basis` for cross-cutting concerns:
+
+| basis Package | Used For |
+|--------------|----------|
+| `service/secret` | SecretProvider — local JSON, AWS Secrets Manager, GCP Secret Manager |
+| `service/storage` | S3 + GCS object storage (replaces bdsmail's custom bucket code) |
+| `common` | `WriteError` (RFC 7807 Problem Detail) for API error responses |
+| `common` | CLI flag definitions shared across projects |
+
+### Configuration
+
+No `.env` file — all config via CLI flags + secrets:
+
+```bash
+bdsmail \
+  --db_type=dynamodb \
+  --dynamodb_region=us-east-1 \
+  --bucket_type=s3 \
+  --s3_bucket=bdsmail-attachments \
+  --secret_mode=aws \
+  --smtp_port=25 \
+  --https_port=443
+```
+
+Secrets (`database_url`, `admin_secret`, `relay_host`, `relay_user`, `relay_password`) are loaded from the configured SecretProvider at startup.

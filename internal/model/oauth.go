@@ -3,22 +3,23 @@ package model
 import (
 	"time"
 
-	"golang.org/x/crypto/bcrypt"
+	"github.com/mustafakarli/bdsmail/internal/cryptoutil"
 )
 
 // OAuthClient represents a registered application that can use "Sign in with bdsmail".
 type OAuthClient struct {
-	ID           string    // UUID
-	Name         string    // App display name
-	ClientID     string    // Public identifier (random hex)
-	SecretHash   string    // Bcrypt hash of client_secret
-	RedirectURI  string    // Callback URL
-	OwnerEmail   string    // Developer who registered the app
-	CreatedAt    time.Time
+	ID          string
+	Name        string
+	ClientID    string
+	SecretHash  string
+	RedirectURI string
+	Domain      string
+	CreatedBy   string
+	CreatedAt   time.Time
 }
 
 func (c *OAuthClient) CheckSecret(secret string) bool {
-	return checkHash(c.SecretHash, secret)
+	return cryptoutil.CheckSecret(c.SecretHash, secret)
 }
 
 // OAuthCode is a short-lived authorization code exchanged for tokens.
@@ -28,7 +29,7 @@ type OAuthCode struct {
 	UserEmail   string
 	RedirectURI string
 	Scope       string
-	Nonce       string    // OIDC nonce for replay protection
+	Nonce       string
 	ExpiresAt   time.Time
 	Used        bool
 }
@@ -48,8 +49,4 @@ type OAuthToken struct {
 
 func (t *OAuthToken) IsExpired() bool {
 	return time.Now().After(t.ExpiresAt)
-}
-
-func checkHash(hash, value string) bool {
-	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(value)) == nil
 }

@@ -84,7 +84,7 @@ func (ah *AdminHandlers) HandleAdminDomains(w http.ResponseWriter, r *http.Reque
 	tmpl.render(w, "layout", pageData{
 		Username: "Admin",
 		Email:    "admin",
-		Message:  data,
+		AdminData: data,
 	})
 }
 
@@ -170,7 +170,7 @@ func (ah *AdminHandlers) HandleAdminUsers(w http.ResponseWriter, r *http.Request
 	users, _ := ah.store.DB.ListUsers()
 	data.Users = users
 
-	tmpl.render(w, "layout", pageData{Username: "Admin", Email: "admin", Message: data})
+	tmpl.render(w, "layout", pageData{Username: "Admin", Email: "admin", AdminData: data})
 }
 
 // HandleAdminAliases handles alias management.
@@ -210,7 +210,7 @@ func (ah *AdminHandlers) HandleAdminAliases(w http.ResponseWriter, r *http.Reque
 	aliases, _ := ah.store.DB.ListAliases()
 	data.Aliases = aliases
 
-	tmpl.render(w, "layout", pageData{Username: "Admin", Email: "admin", Message: data})
+	tmpl.render(w, "layout", pageData{Username: "Admin", Email: "admin", AdminData: data})
 }
 
 // HandleAdminLists handles mailing list management.
@@ -250,7 +250,7 @@ func (ah *AdminHandlers) HandleAdminLists(w http.ResponseWriter, r *http.Request
 	lists, _ := ah.store.DB.ListMailingLists()
 	data.Lists = lists
 
-	tmpl.render(w, "layout", pageData{Username: "Admin", Email: "admin", Message: data})
+	tmpl.render(w, "layout", pageData{Username: "Admin", Email: "admin", AdminData: data})
 }
 
 // handleAdminAuth checks admin authentication, returns true if authenticated.

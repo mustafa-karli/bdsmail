@@ -142,33 +142,38 @@ export BDS_DYNAMODB_REGION=us-east-1
 bash /tmp/scripts/deploy.sh
 ```
 
-### 6. Configure `.env`
+### 6. Configure Systemd Service
 
-Edit `/opt/bdsmail/.env`:
+The deploy script creates `/etc/systemd/system/bdsmail.service`. Update the `ExecStart` line with your settings:
 
 ```bash
-BDS_DOMAINS=yourdomain.com
-BDS_DB_TYPE=dynamodb
-BDS_DYNAMODB_REGION=us-east-1
+ExecStart=/opt/bdsmail/bdsmail \
+  --db_type=dynamodb \
+  --dynamodb_region=us-east-1 \
+  --bucket_type=s3 \
+  --s3_bucket=your-bucket-name \
+  --s3_region=us-east-1 \
+  --secret_mode=aws \
+  --smtp_port=25 \
+  --pop3_port=110 \
+  --imap_port=143 \
+  --https_port=443 \
+  --http_port=80 \
+  --amplify_url=main.d1abc2def3.amplifyapp.com
+```
 
-BDS_RELAY_HOST=email-smtp.us-east-1.amazonaws.com
-BDS_RELAY_PORT=587
-BDS_RELAY_USER=your-ses-smtp-username
-BDS_RELAY_PASSWORD=your-ses-smtp-password
+Secrets (`admin_secret`, `relay_host`, `relay_user`, `relay_password`, `database_url`) are loaded from AWS Secrets Manager automatically when `--secret_mode=aws`.
 
-# Optional: S3 for attachments
-BDS_BUCKET_TYPE=s3
-BDS_S3_REGION=us-east-1
-BDS_S3_BUCKET=your-bucket-name
-
-BDS_SMTP_PORT=25
-BDS_POP3_PORT=110
-BDS_IMAP_PORT=143
-BDS_HTTPS_PORT=443
-BDS_HTTP_PORT=80
+Store them in Secrets Manager:
+```bash
+aws secretsmanager create-secret --name admin_secret --secret-string "your-admin-secret"
+aws secretsmanager create-secret --name relay_host --secret-string "email-smtp.us-east-1.amazonaws.com"
+aws secretsmanager create-secret --name relay_user --secret-string "your-ses-smtp-username"
+aws secretsmanager create-secret --name relay_password --secret-string "your-ses-smtp-password"
 ```
 
 ```bash
+sudo systemctl daemon-reload
 sudo systemctl restart bdsmail
 ```
 
@@ -436,7 +441,7 @@ No database setup needed. The SQLite file is created automatically on first star
 
 ## Configuration Reference
 
-All configuration via `.env` file at `/opt/bdsmail/.env`:
+All configuration via CLI flags. Secrets loaded from SecretProvider (`--secret_mode=local|aws|gsm`):
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -509,33 +514,22 @@ This is the recommended multi-domain deployment. One Lightsail instance serves a
 
 ### Architecture
 
-```
-                    ┌─────────────────────────────┐
-                    │         DNS Provider         │
-                    │  (Route 53, GoDaddy, etc.)   │
-                    └─────────┬───────────────────┘
-                              │
-              ┌───────────────┼───────────────┐
-              │               │               │
-    mail.domain.com    webmail.domain.com    MX record
-    (A → Lightsail IP)  (CNAME → Amplify)   (→ mail.domain.com)
-              │               │
-              ▼               ▼
-    ┌─────────────────┐  ┌──────────────┐
-    │   AWS Lightsail  │  │ AWS Amplify  │
-    │                  │  │              │
-    │  SMTP :25        │  │  Vue 3 SPA   │
-    │  POP3 :110       │  │  (static)    │
-    │  IMAP :143       │◄─┤              │
-    │  HTTPS :443      │  │  Calls       │
-    │   /api/*         │  │  mail.X/api  │
-    │   /oauth/*       │  └──────────────┘
-    │                  │
-    └────┬────┬───┬────┘
-         │    │   │
-         ▼    ▼   ▼
-    DynamoDB  S3  SES
-    (data)  (att) (outbound)
+```mermaid
+graph TD
+    DNS["DNS Provider<br/>(Route 53, GoDaddy, etc.)"]
+
+    DNS -->|"A record<br/>mail.domain.com"| Lightsail
+    DNS -->|"CNAME<br/>webmail.domain.com"| Amplify
+    DNS -->|"MX record<br/>→ mail.domain.com"| Lightsail
+
+    Amplify["AWS Amplify<br/>Vue 3 SPA<br/>(static)"]
+    Amplify -->|"calls mail.domain.com/api"| Lightsail
+
+    Lightsail["AWS Lightsail<br/>SMTP :25 · POP3 :110<br/>IMAP :143 · HTTPS :443<br/>/api/* · /oauth/*"]
+
+    Lightsail --> DynamoDB[(DynamoDB<br/>data)]
+    Lightsail --> S3[(S3<br/>attachments)]
+    Lightsail --> SES["SES<br/>outbound email"]
 ```
 
 ### What Each Domain Gets

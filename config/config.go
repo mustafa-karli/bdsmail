@@ -1,45 +1,129 @@
 package config
 
 import (
-	"bufio"
+	"context"
+	"flag"
 	"fmt"
-	"os"
-	"strconv"
-	"strings"
+	"log"
 	"sync"
-	"time"
+
+	"github.com/mustafa-karli/basis/common"
+	"github.com/mustafa-karli/basis/port"
+	"github.com/mustafa-karli/basis/service/secret"
+)
+
+// CLI flags specific to bdsmail (basis common flags are used for shared settings)
+var (
+	FlagSMTPPort    = flag.Int("smtp_port", 25, "SMTP server port")
+	FlagPOP3Port    = flag.Int("pop3_port", 110, "POP3 server port")
+	FlagIMAPPort    = flag.Int("imap_port", 143, "IMAP server port")
+	FlagHTTPSPort   = flag.Int("https_port", 443, "HTTPS web UI port")
+	FlagHTTPPort    = flag.Int("http_port", 80, "HTTP port for ACME challenges")
+	FlagDBType      = flag.String("db_type", "postgres", "Database backend: postgres, sqlite, dynamodb, firestore")
+	FlagSQLitePath  = flag.String("sqlite_path", "/opt/bdsmail/bdsmail.db", "SQLite database file path")
+	FlagDynamoDBRegion = flag.String("dynamodb_region", "us-east-1", "AWS region for DynamoDB")
+	FlagBucketType  = flag.String("bucket_type", "", "Object storage: gcs, s3, or empty (disabled)")
+	FlagGCSBucket   = flag.String("gcs_bucket", "", "GCS bucket name")
+	FlagS3Region    = flag.String("s3_region", "us-east-1", "AWS region for S3")
+	FlagS3Bucket    = flag.String("s3_bucket", "", "S3 bucket name")
+	FlagDKIMKeyDir  = flag.String("dkim_key_dir", "/opt/bdsmail/dkim", "DKIM private keys directory")
+	FlagDKIMSelector = flag.String("dkim_selector", "default", "DKIM selector name")
+	FlagAcmeWebroot = flag.String("acme_webroot", "/opt/bdsmail/acme", "ACME challenge webroot")
+	FlagAmplifyURL  = flag.String("amplify_url", "", "Amplify app URL for webmail CNAME")
+	FlagMaxAttachmentBytes = flag.Int64("max_attachment_bytes", 10*1024*1024, "Maximum attachment size in bytes")
 )
 
 type Config struct {
 	mu           sync.RWMutex
-	Domains      []string
-	SMTPPort     string
-	POP3Port     string
-	IMAPPort     string
-	HTTPSPort    string
-	HTTPPort     string // plain HTTP for ACME challenges, default 80
+	Domains      []string // loaded from DB at startup
+	SMTPPort     int
+	POP3Port     int
+	IMAPPort     int
+	HTTPSPort    int
+	HTTPPort     int
 	TLSCert      string
 	TLSKey       string
 	GCSBucket    string
-	DatabaseURL  string
+	DatabaseURL  string // loaded from secrets
 	DKIMKeyDir   string
 	DKIMSelector string
-	AdminSecret    string
-	AcmeWebroot    string
-	EnvFile        string
-	RelayHost      string
-	RelayPort      string
-	RelayUser      string
-	RelayPassword  string
-	DBType         string
-	SQLitePath     string
+	AdminSecret  string // loaded from secrets
+	AcmeWebroot  string
+	RelayHost    string // loaded from secrets
+	RelayPort    int
+	RelayUser    string // loaded from secrets
+	RelayPassword string // loaded from secrets
+	DBType       string
+	SQLitePath   string
 	DynamoDBRegion     string
 	FirestoreProject   string
-	BucketType         string // "gcs", "s3", or "" (disabled)
+	BucketType         string
 	S3Region           string
 	S3Bucket           string
 	MaxAttachmentBytes int64
-	AmplifyURL         string // Amplify app URL for webmail CNAME (e.g. "d1234.cloudfront.net")
+	AmplifyURL         string
+	Secrets            port.SecretProvider
+}
+
+// Load creates Config from CLI flags and loads secrets from the configured provider.
+func Load() *Config {
+	if !flag.Parsed() {
+		flag.Parse()
+	}
+
+	ctx := context.Background()
+
+	// Initialize secret provider (local JSON, AWS Secrets Manager, or GCP Secret Manager)
+	sp, err := secret.NewSecretProvider(ctx)
+	if err != nil {
+		log.Printf("warning: secret provider init failed: %v (secrets will be unavailable)", err)
+	}
+
+	cfg := &Config{
+		SMTPPort:     *FlagSMTPPort,
+		POP3Port:     *FlagPOP3Port,
+		IMAPPort:     *FlagIMAPPort,
+		HTTPSPort:    *FlagHTTPSPort,
+		HTTPPort:     *FlagHTTPPort,
+		TLSCert:      *common.TLSCert,
+		TLSKey:       *common.TLSKey,
+		GCSBucket:    *FlagGCSBucket,
+		DKIMKeyDir:   *FlagDKIMKeyDir,
+		DKIMSelector: *FlagDKIMSelector,
+		AcmeWebroot:  *FlagAcmeWebroot,
+		DBType:       *FlagDBType,
+		SQLitePath:   *FlagSQLitePath,
+		DynamoDBRegion:     *FlagDynamoDBRegion,
+		FirestoreProject:   *common.ProjectID,
+		BucketType:         *FlagBucketType,
+		S3Region:           *FlagS3Region,
+		S3Bucket:           *FlagS3Bucket,
+		MaxAttachmentBytes: *FlagMaxAttachmentBytes,
+		AmplifyURL:         *FlagAmplifyURL,
+		Secrets:            sp,
+	}
+
+	// Load secrets
+	if sp != nil {
+		cfg.DatabaseURL = getSecret(ctx, sp, "database_url")
+		cfg.AdminSecret = getSecret(ctx, sp, "admin_secret")
+		cfg.RelayHost = getSecret(ctx, sp, "relay_host")
+		cfg.RelayUser = getSecret(ctx, sp, "relay_user")
+		cfg.RelayPassword = getSecret(ctx, sp, "relay_password")
+	}
+
+	// Relay port from flag (not a secret)
+	cfg.RelayPort = 587
+
+	return cfg
+}
+
+func getSecret(ctx context.Context, sp port.SecretProvider, key string) string {
+	val, err := sp.GetSecret(ctx, key)
+	if err != nil {
+		return ""
+	}
+	return val
 }
 
 // HostToDomain maps a Host header like "mail.domain1.com" to "domain1.com".
@@ -47,16 +131,21 @@ func (c *Config) HostToDomain(host string) string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	if idx := strings.LastIndex(host, ":"); idx != -1 {
-		host = host[:idx]
+	// Strip port
+	for i, ch := range host {
+		if ch == ':' {
+			host = host[:i]
+			break
+		}
 	}
+
 	for _, d := range c.Domains {
-		if host == "mail."+d || host == d {
+		if host == "mail."+d || host == "webmail."+d || host == d {
 			return d
 		}
 	}
 	for _, prefix := range []string{"mail.", "webmail."} {
-		if strings.HasPrefix(host, prefix) {
+		if len(host) > len(prefix) && host[:len(prefix)] == prefix {
 			candidate := host[len(prefix):]
 			for _, d := range c.Domains {
 				if candidate == d {
@@ -92,7 +181,7 @@ func (c *Config) GetDomains() []string {
 	return cp
 }
 
-// AddDomain adds a domain to the list if not already present.
+// AddDomain adds a domain to the in-memory list.
 func (c *Config) AddDomain(domain string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -104,176 +193,38 @@ func (c *Config) AddDomain(domain string) {
 	c.Domains = append(c.Domains, domain)
 }
 
-// PersistDomains updates the BDS_DOMAINS line in the env file.
-func (c *Config) PersistDomains() error {
-	if c.EnvFile == "" {
-		return nil
-	}
-	c.mu.RLock()
-	newValue := strings.Join(c.Domains, ",")
-	c.mu.RUnlock()
-
-	data, err := os.ReadFile(c.EnvFile)
-	if err != nil {
-		return fmt.Errorf("cannot read env file: %w", err)
-	}
-
-	var lines []string
-	found := false
-	scanner := bufio.NewScanner(strings.NewReader(string(data)))
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "BDS_DOMAINS=") {
-			lines = append(lines, "BDS_DOMAINS="+newValue)
-			found = true
-		} else {
-			lines = append(lines, line)
-		}
-	}
-	if !found {
-		lines = append(lines, "BDS_DOMAINS="+newValue)
-	}
-
-	return os.WriteFile(c.EnvFile, []byte(strings.Join(lines, "\n")+"\n"), 0644)
+// LoadDomainsFromDB populates the domain list from the database.
+func (c *Config) LoadDomainsFromDB(domainNames []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Domains = domainNames
 }
 
-func Load() (*Config, EnvMap) {
-	envFile := "/opt/bdsmail/.env"
-	if v := os.Getenv("BDS_ENV_FILE"); v != "" {
-		envFile = v
-	}
-	env := loadEnvFile(envFile)
-
-	domainsStr := env.Get("BDS_DOMAINS", "mydomain.com")
-	var domains []string
-	for _, d := range strings.Split(domainsStr, ",") {
-		d = strings.TrimSpace(d)
-		if d != "" {
-			domains = append(domains, d)
-		}
-	}
-
-	return &Config{
-		Domains:      domains,
-		SMTPPort:     env.Get("BDS_SMTP_PORT", "2525"),
-		POP3Port:     env.Get("BDS_POP3_PORT", "1100"),
-		IMAPPort:     env.Get("BDS_IMAP_PORT", "1430"),
-		HTTPSPort:    env.Get("BDS_HTTPS_PORT", "8443"),
-		HTTPPort:     env.Get("BDS_HTTP_PORT", "8080"),
-		TLSCert:      env.Get("BDS_TLS_CERT", ""),
-		TLSKey:       env.Get("BDS_TLS_KEY", ""),
-		GCSBucket:    env.Get("BDS_GCS_BUCKET", "bdsmail-bodies"),
-		DatabaseURL:  env.Get("DATABASE_URL", "postgres://localhost:5432/bdsmail?sslmode=disable"),
-		DKIMKeyDir:   env.Get("BDS_DKIM_KEY_DIR", ""),
-		DKIMSelector: env.Get("BDS_DKIM_SELECTOR", "default"),
-		AdminSecret:  env.Get("BDS_ADMIN_SECRET", ""),
-		AcmeWebroot:  env.Get("BDS_ACME_WEBROOT", "/opt/bdsmail/acme"),
-		EnvFile:       envFile,
-		DBType:         env.Get("BDS_DB_TYPE", "postgres"),
-		SQLitePath:     env.Get("BDS_SQLITE_PATH", "/opt/bdsmail/bdsmail.db"),
-		DynamoDBRegion:   env.Get("BDS_DYNAMODB_REGION", "us-west-2"),
-		FirestoreProject:   env.Get("BDS_FIRESTORE_PROJECT", ""),
-		BucketType:         env.Get("BDS_BUCKET_TYPE", ""),
-		S3Region:           env.Get("BDS_S3_REGION", "us-west-2"),
-		S3Bucket:           env.Get("BDS_S3_BUCKET", ""),
-		MaxAttachmentBytes: env.GetInt64("BDS_MAX_ATTACHMENT_BYTES", 10*1024*1024),
-		AmplifyURL:     env.Get("BDS_AMPLIFY_URL", ""),
-		RelayHost:      env.Get("BDS_RELAY_HOST", ""),
-		RelayPort:     env.Get("BDS_RELAY_PORT", "587"),
-		RelayUser:     env.Get("BDS_RELAY_USER", ""),
-		RelayPassword: env.Get("BDS_RELAY_PASSWORD", ""),
-	}, env
+// GetHTTPSPortStr returns the HTTPS port as string.
+func (c *Config) GetHTTPSPortStr() string {
+	return itoa(c.HTTPSPort)
 }
 
-type EnvMap map[string]string
-
-func (e EnvMap) Get(key, fallback string) string {
-	if v, ok := e[key]; ok && v != "" {
-		return v
-	}
-	return fallback
+// GetHTTPPortStr returns the HTTP port as string.
+func (c *Config) GetHTTPPortStr() string {
+	return itoa(c.HTTPPort)
 }
 
-func (e EnvMap) GetBool(key string, fallback bool) bool {
-	v, ok := e[key]
-	if !ok || v == "" {
-		return fallback
-	}
-	b, err := strconv.ParseBool(v)
-	if err != nil {
-		return fallback
-	}
-	return b
+// GetSMTPPortStr returns the SMTP port as string.
+func (c *Config) GetSMTPPortStr() string {
+	return itoa(c.SMTPPort)
 }
 
-func (e EnvMap) GetDuration(key string, fallback time.Duration) time.Duration {
-	v, ok := e[key]
-	if !ok || v == "" {
-		return fallback
-	}
-	secs, err := strconv.Atoi(v)
-	if err != nil {
-		return fallback
-	}
-	return time.Duration(secs) * time.Second
+// GetPOP3PortStr returns the POP3 port as string.
+func (c *Config) GetPOP3PortStr() string {
+	return itoa(c.POP3Port)
 }
 
-func (e EnvMap) GetInt(key string, fallback int) int {
-	v, ok := e[key]
-	if !ok || v == "" {
-		return fallback
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		return fallback
-	}
-	return n
+// GetIMAPPortStr returns the IMAP port as string.
+func (c *Config) GetIMAPPortStr() string {
+	return itoa(c.IMAPPort)
 }
 
-func (e EnvMap) GetFloat(key string, fallback float64) float64 {
-	v, ok := e[key]
-	if !ok || v == "" {
-		return fallback
-	}
-	f, err := strconv.ParseFloat(v, 64)
-	if err != nil {
-		return fallback
-	}
-	return f
-}
-
-func (e EnvMap) GetInt64(key string, fallback int64) int64 {
-	v, ok := e[key]
-	if !ok || v == "" {
-		return fallback
-	}
-	n, err := strconv.ParseInt(v, 10, 64)
-	if err != nil {
-		return fallback
-	}
-	return n
-}
-
-// loadEnvFile reads a .env file and returns a map of key=value pairs.
-func loadEnvFile(path string) EnvMap {
-	env := make(EnvMap)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return env
-	}
-	scanner := bufio.NewScanner(strings.NewReader(string(data)))
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		key := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
-		env[key] = value
-	}
-	return env
+func itoa(i int) string {
+	return fmt.Sprintf("%d", i)
 }

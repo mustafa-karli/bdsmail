@@ -129,6 +129,22 @@ func (db *DbFirestore) contacts() *firestore.CollectionRef {
 	return db.client.Collection("bdsmail-contacts")
 }
 
+func (db *DbFirestore) domains() *firestore.CollectionRef {
+	return db.client.Collection("bdsmail-domains")
+}
+
+func (db *DbFirestore) oauthClients() *firestore.CollectionRef {
+	return db.client.Collection("bdsmail-oauth-clients")
+}
+
+func (db *DbFirestore) oauthCodes() *firestore.CollectionRef {
+	return db.client.Collection("bdsmail-oauth-codes")
+}
+
+func (db *DbFirestore) oauthTokens() *firestore.CollectionRef {
+	return db.client.Collection("bdsmail-oauth-tokens")
+}
+
 // ---- User operations ----
 
 func (db *DbFirestore) CreateUser(username, domain, displayName, passwordHash string) error {
@@ -855,35 +871,203 @@ func (db *DbFirestore) DeleteContact(id string) error {
 	return err
 }
 
-// --- OAuth operations (not yet implemented for Firestore) ---
+// --- Domain operations ---
+
+type docDomain struct {
+	Name       string `firestore:"name"`
+	APIKeyHash string `firestore:"api_key_hash"`
+	SESStatus  string `firestore:"ses_status"`
+	DKIMStatus string `firestore:"dkim_status"`
+	Status     string `firestore:"status"`
+	CreatedBy  string `firestore:"created_by"`
+	CreatedAt  string `firestore:"created_at"`
+}
+
+func (db *DbFirestore) CreateDomain(domain *model.Domain) error {
+	dd := docDomain{
+		Name: domain.Name, APIKeyHash: domain.APIKeyHash,
+		SESStatus: domain.SESStatus, DKIMStatus: domain.DKIMStatus,
+		Status: domain.Status, CreatedBy: domain.CreatedBy,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	_, err := db.domains().Doc(domain.Name).Set(context.Background(), dd)
+	return err
+}
+
+func (db *DbFirestore) GetDomain(name string) (*model.Domain, error) {
+	doc, err := db.domains().Doc(name).Get(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("domain not found: %s", name)
+	}
+	var dd docDomain
+	doc.DataTo(&dd)
+	createdAt, _ := time.Parse(time.RFC3339, dd.CreatedAt)
+	return &model.Domain{Name: dd.Name, APIKeyHash: dd.APIKeyHash, SESStatus: dd.SESStatus, DKIMStatus: dd.DKIMStatus, Status: dd.Status, CreatedBy: dd.CreatedBy, CreatedAt: createdAt}, nil
+}
+
+func (db *DbFirestore) ListDomains() ([]*model.Domain, error) {
+	iter := db.domains().Documents(context.Background())
+	defer iter.Stop()
+	var domains []*model.Domain
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		var dd docDomain
+		doc.DataTo(&dd)
+		createdAt, _ := time.Parse(time.RFC3339, dd.CreatedAt)
+		domains = append(domains, &model.Domain{Name: dd.Name, APIKeyHash: dd.APIKeyHash, SESStatus: dd.SESStatus, DKIMStatus: dd.DKIMStatus, Status: dd.Status, CreatedBy: dd.CreatedBy, CreatedAt: createdAt})
+	}
+	return domains, nil
+}
+
+func (db *DbFirestore) UpdateDomainStatus(name, sesStatus, dkimStatus string) error {
+	_, err := db.domains().Doc(name).Update(context.Background(), []firestore.Update{
+		{Path: "ses_status", Value: sesStatus},
+		{Path: "dkim_status", Value: dkimStatus},
+	})
+	return err
+}
+
+func (db *DbFirestore) DeleteDomain(name string) error {
+	_, err := db.domains().Doc(name).Delete(context.Background())
+	return err
+}
+
+// --- OAuth operations ---
+
+type docOAuthClient struct {
+	ID          string `firestore:"id"`
+	Name        string `firestore:"name"`
+	ClientID    string `firestore:"client_id"`
+	SecretHash  string `firestore:"secret_hash"`
+	RedirectURI string `firestore:"redirect_uri"`
+	Domain      string `firestore:"domain"`
+	CreatedBy   string `firestore:"created_by"`
+	CreatedAt   string `firestore:"created_at"`
+}
+
+type docOAuthCode struct {
+	Code        string `firestore:"code"`
+	ClientID    string `firestore:"client_id"`
+	UserEmail   string `firestore:"user_email"`
+	RedirectURI string `firestore:"redirect_uri"`
+	Scope       string `firestore:"scope"`
+	Nonce       string `firestore:"nonce"`
+	ExpiresAt   string `firestore:"expires_at"`
+	Used        bool   `firestore:"used"`
+}
+
+type docOAuthToken struct {
+	Token     string `firestore:"token"`
+	ClientID  string `firestore:"client_id"`
+	UserEmail string `firestore:"user_email"`
+	Scope     string `firestore:"scope"`
+	ExpiresAt string `firestore:"expires_at"`
+}
 
 func (db *DbFirestore) CreateOAuthClient(client *model.OAuthClient) error {
-	return fmt.Errorf("OAuth not supported on Firestore backend")
+	dc := docOAuthClient{
+		ID: client.ID, Name: client.Name, ClientID: client.ClientID,
+		SecretHash: client.SecretHash, RedirectURI: client.RedirectURI,
+		Domain: client.Domain, CreatedBy: client.CreatedBy,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	_, err := db.oauthClients().Doc(client.ID).Set(context.Background(), dc)
+	return err
 }
+
 func (db *DbFirestore) GetOAuthClient(clientID string) (*model.OAuthClient, error) {
-	return nil, fmt.Errorf("OAuth not supported on Firestore backend")
+	iter := db.oauthClients().Where("client_id", "==", clientID).Limit(1).Documents(context.Background())
+	defer iter.Stop()
+	doc, err := iter.Next()
+	if err != nil {
+		return nil, fmt.Errorf("oauth client not found: %s", clientID)
+	}
+	var dc docOAuthClient
+	doc.DataTo(&dc)
+	createdAt, _ := time.Parse(time.RFC3339, dc.CreatedAt)
+	return &model.OAuthClient{ID: dc.ID, Name: dc.Name, ClientID: dc.ClientID, SecretHash: dc.SecretHash, RedirectURI: dc.RedirectURI, Domain: dc.Domain, CreatedBy: dc.CreatedBy, CreatedAt: createdAt}, nil
 }
-func (db *DbFirestore) ListOAuthClients(ownerEmail string) ([]*model.OAuthClient, error) {
-	return nil, fmt.Errorf("OAuth not supported on Firestore backend")
+
+func (db *DbFirestore) ListOAuthClients(domain string) ([]*model.OAuthClient, error) {
+	iter := db.oauthClients().Where("domain", "==", domain).Documents(context.Background())
+	defer iter.Stop()
+	var clients []*model.OAuthClient
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		var dc docOAuthClient
+		doc.DataTo(&dc)
+		createdAt, _ := time.Parse(time.RFC3339, dc.CreatedAt)
+		clients = append(clients, &model.OAuthClient{ID: dc.ID, Name: dc.Name, ClientID: dc.ClientID, SecretHash: dc.SecretHash, RedirectURI: dc.RedirectURI, Domain: dc.Domain, CreatedBy: dc.CreatedBy, CreatedAt: createdAt})
+	}
+	return clients, nil
 }
+
 func (db *DbFirestore) DeleteOAuthClient(id string) error {
-	return fmt.Errorf("OAuth not supported on Firestore backend")
+	_, err := db.oauthClients().Doc(id).Delete(context.Background())
+	return err
 }
+
 func (db *DbFirestore) CreateOAuthCode(code *model.OAuthCode) error {
-	return fmt.Errorf("OAuth not supported on Firestore backend")
+	dc := docOAuthCode{
+		Code: code.Code, ClientID: code.ClientID, UserEmail: code.UserEmail,
+		RedirectURI: code.RedirectURI, Scope: code.Scope, Nonce: code.Nonce,
+		ExpiresAt: code.ExpiresAt.UTC().Format(time.RFC3339), Used: false,
+	}
+	_, err := db.oauthCodes().Doc(code.Code).Set(context.Background(), dc)
+	return err
 }
+
 func (db *DbFirestore) GetOAuthCode(code string) (*model.OAuthCode, error) {
-	return nil, fmt.Errorf("OAuth not supported on Firestore backend")
+	doc, err := db.oauthCodes().Doc(code).Get(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("oauth code not found")
+	}
+	var dc docOAuthCode
+	doc.DataTo(&dc)
+	expiresAt, _ := time.Parse(time.RFC3339, dc.ExpiresAt)
+	return &model.OAuthCode{Code: dc.Code, ClientID: dc.ClientID, UserEmail: dc.UserEmail, RedirectURI: dc.RedirectURI, Scope: dc.Scope, Nonce: dc.Nonce, ExpiresAt: expiresAt, Used: dc.Used}, nil
 }
+
 func (db *DbFirestore) MarkOAuthCodeUsed(code string) error {
-	return fmt.Errorf("OAuth not supported on Firestore backend")
+	_, err := db.oauthCodes().Doc(code).Update(context.Background(), []firestore.Update{
+		{Path: "used", Value: true},
+	})
+	return err
 }
+
 func (db *DbFirestore) CreateOAuthToken(token *model.OAuthToken) error {
-	return fmt.Errorf("OAuth not supported on Firestore backend")
+	dt := docOAuthToken{
+		Token: token.Token, ClientID: token.ClientID, UserEmail: token.UserEmail,
+		Scope: token.Scope, ExpiresAt: token.ExpiresAt.UTC().Format(time.RFC3339),
+	}
+	_, err := db.oauthTokens().Doc(token.Token).Set(context.Background(), dt)
+	return err
 }
+
 func (db *DbFirestore) GetOAuthToken(token string) (*model.OAuthToken, error) {
-	return nil, fmt.Errorf("OAuth not supported on Firestore backend")
+	doc, err := db.oauthTokens().Doc(token).Get(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("oauth token not found")
+	}
+	var dt docOAuthToken
+	doc.DataTo(&dt)
+	expiresAt, _ := time.Parse(time.RFC3339, dt.ExpiresAt)
+	return &model.OAuthToken{Token: dt.Token, ClientID: dt.ClientID, UserEmail: dt.UserEmail, Scope: dt.Scope, ExpiresAt: expiresAt}, nil
 }
+
 func (db *DbFirestore) DeleteOAuthToken(token string) error {
-	return fmt.Errorf("OAuth not supported on Firestore backend")
+	_, err := db.oauthTokens().Doc(token).Delete(context.Background())
+	return err
 }

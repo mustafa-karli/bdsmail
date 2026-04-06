@@ -158,8 +158,18 @@ All security features are **enabled by default** with a fail-open strategy.
 | **Outbound** | ClamAV scan, Safe Browsing check, DKIM signing |
 | **Transport** | MTA-STS policy enforcement, DANE/TLSA verification, REQUIRETLS, TLSRPT reporting |
 | **Auth** | Bcrypt passwords, session cookies, OAuth 2.0 with JWT |
+| **Secrets** | CLI flags + SecretProvider (local JSON, AWS Secrets Manager, GCP Secret Manager) |
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for security configuration details.
+
+## Code Architecture
+
+- **basis package** — Shared library (`github.com/mustafa-karli/basis`) for secrets, storage, logging, HTTP utilities
+- **Interface Segregation** — Database split into `UserStore`, `MessageStore`, `AliasStore`, `FilterStore`, `ContactStore`, `DomainStore`, `OAuthStore` composed into `Database`
+- **CLI flags** — All configuration via `flag` package, no `.env` file dependency. Secrets loaded via `SecretProvider` at startup
+- **Domain table** — Domains stored in DB (not config file), with API key hash, SES/DKIM status, created_by
+- **cryptoutil** — Shared crypto helpers for secure random generation and bcrypt hashing
+- **Type-safe templates** — `pageData` uses concrete types (`[]*model.Message`, `[]*model.Filter`) instead of `interface{}`
 
 ## Mail Client Access
 
@@ -185,3 +195,156 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for security configuration details.
 **Admin** — Web panel at `/admin/` for domains, users, aliases, mailing lists. Protected by `BDS_ADMIN_SECRET`.
 
 **Adding Domains** — `./bdsmail -adddomain newdomain.com` or via `/admin/domains`. Auto-generates DKIM keys, expands TLS cert, persists to `.env`.
+
+---
+
+## Data Model
+
+### Mail & User Data
+
+```mermaid
+erDiagram
+    mail_content }o--|| user_account : "owner_user"
+    mail_filter }o--|| user_account : "user_email"
+    user_contact }o--|| user_account : "owner_email"
+    auto_reply |o--|| user_account : "user_email"
+    auto_reply_log }o--|| user_account : "user_email"
+
+    mail_content {
+        TEXT id PK
+        TEXT message_id
+        TEXT from_addr
+        TEXT to_addrs
+        TEXT subject
+        TEXT body
+        TEXT attachments
+        TEXT owner_user FK
+        TEXT folder
+        BOOLEAN seen
+        BOOLEAN deleted
+        TIMESTAMPTZ received_at
+    }
+
+    mail_filter {
+        TEXT id PK
+        TEXT user_email FK
+        TEXT name
+        INTEGER priority
+        TEXT conditions
+        TEXT actions
+        BOOLEAN enabled
+    }
+
+    user_contact {
+        TEXT id PK
+        TEXT owner_email FK
+        TEXT vcard_data
+        TEXT etag
+        TIMESTAMPTZ updated_at
+    }
+
+    user_account {
+        SERIAL id PK
+        TEXT username
+        TEXT domain
+        TEXT display_name
+        TEXT password_hash
+        TIMESTAMPTZ created_at
+    }
+
+    auto_reply {
+        TEXT user_email PK
+        BOOLEAN enabled
+        TEXT subject
+        TEXT body
+        TIMESTAMPTZ start_date
+        TIMESTAMPTZ end_date
+    }
+
+    auto_reply_log {
+        TEXT user_email PK
+        TEXT sender_email PK
+        TIMESTAMPTZ sent_at
+    }
+```
+
+### Domain & OAuth
+
+```mermaid
+erDiagram
+    user_account }o--|| domain : "domain"
+    oauth_client }o--|| domain : "domain"
+    oauth_client ||--o{ oauth_code : "client_id"
+    oauth_client ||--o{ oauth_token : "client_id"
+
+    user_account {
+        SERIAL id PK
+        TEXT username
+        TEXT domain FK
+    }
+
+    domain {
+        TEXT name PK
+        TEXT api_key_hash
+        TEXT ses_status
+        TEXT dkim_status
+        TEXT status
+        TEXT created_by
+        TIMESTAMPTZ created_at
+    }
+
+    oauth_client {
+        TEXT id PK
+        TEXT name
+        TEXT client_id UK
+        TEXT secret_hash
+        TEXT redirect_uri
+        TEXT domain FK
+        TEXT created_by
+        TIMESTAMPTZ created_at
+    }
+
+    oauth_code {
+        TEXT code PK
+        TEXT client_id FK
+        TEXT user_email FK
+        TEXT scope
+        TEXT nonce
+        TIMESTAMPTZ expires_at
+        BOOLEAN used
+    }
+
+    oauth_token {
+        TEXT token PK
+        TEXT client_id FK
+        TEXT user_email FK
+        TEXT scope
+        TIMESTAMPTZ expires_at
+    }
+```
+
+### Mailing Lists & Aliases
+
+```mermaid
+erDiagram
+    list_member }o--|| mailing_list : "list_address"
+
+    mail_alias {
+        TEXT alias_email PK
+        TEXT target_emails
+        BOOLEAN is_catch_all
+    }
+
+    mailing_list {
+        TEXT list_address PK
+        TEXT name
+        TEXT description
+        TEXT owner_email
+        TIMESTAMPTZ created_at
+    }
+
+    list_member {
+        TEXT list_address FK
+        TEXT member_email PK
+    }
+```

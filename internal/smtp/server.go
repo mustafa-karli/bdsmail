@@ -1,6 +1,7 @@
 package smtp
 
 import (
+	"fmt"
 	"log"
 	"time"
 
@@ -19,7 +20,7 @@ func NewServer(cfg *config.Config, s *store.Store, checker *security.Checker, re
 	backend := NewBackend(s, checker, relay, cfg)
 
 	srv := gosmtp.NewServer(backend)
-	srv.Addr = ":" + cfg.SMTPPort
+	srv.Addr = fmt.Sprintf(":%d", cfg.SMTPPort)
 	if len(cfg.Domains) > 0 {
 		srv.Domain = cfg.Domains[0]
 	}

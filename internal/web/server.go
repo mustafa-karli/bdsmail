@@ -168,7 +168,10 @@ func (s *Server) Start() error {
 
 	// OAuth / OIDC
 	issuer := "https://mail." + s.cfg.Domains[0]
-	oauthHandler := oauth.NewHandler(s.handlers.store.DB, issuer)
+	oauthHandler, err := oauth.NewHandler(s.handlers.store.DB, issuer)
+	if err != nil {
+		return fmt.Errorf("oauth handler init failed: %w", err)
+	}
 	oauthWeb := NewOAuthWebHandlers(s.handlers, oauthHandler)
 
 	mux.HandleFunc("/developer", func(w http.ResponseWriter, r *http.Request) {
@@ -245,7 +248,7 @@ func (s *Server) Start() error {
 		handler = corsMiddleware(mux, s.cfg)
 	}
 
-	addr := ":" + s.cfg.HTTPSPort
+	addr := fmt.Sprintf(":%d", s.cfg.HTTPSPort)
 	log.Printf("Web server starting on %s", addr)
 
 	if s.certReloader != nil {

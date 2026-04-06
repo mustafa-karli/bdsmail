@@ -27,6 +27,10 @@ const (
 	autoRepliesTableName  = "bdsmail-auto-replies"
 	autoReplyLogTableName = "bdsmail-auto-reply-log"
 	contactsTableName     = "bdsmail-contacts"
+	domainsTableName      = "bdsmail-domains"
+	oauthClientsTableName = "bdsmail-oauth-clients"
+	oauthCodesTableName   = "bdsmail-oauth-codes"
+	oauthTokensTableName  = "bdsmail-oauth-tokens"
 )
 
 type DbDynamo struct {
@@ -165,6 +169,53 @@ func (db *DbDynamo) ensureTables() error {
 	}, []types.AttributeDefinition{
 		{AttributeName: aws.String("owner_email"), AttributeType: types.ScalarAttributeTypeS},
 		{AttributeName: aws.String("id"), AttributeType: types.ScalarAttributeTypeS},
+	}, nil); err != nil {
+		return err
+	}
+
+	// Create domains table
+	if err := db.createTableIfNotExists(ctx, domainsTableName, []types.KeySchemaElement{
+		{AttributeName: aws.String("name"), KeyType: types.KeyTypeHash},
+	}, []types.AttributeDefinition{
+		{AttributeName: aws.String("name"), AttributeType: types.ScalarAttributeTypeS},
+	}, nil); err != nil {
+		return err
+	}
+
+	// Create OAuth clients table (partition: domain, sort: id)
+	if err := db.createTableIfNotExists(ctx, oauthClientsTableName, []types.KeySchemaElement{
+		{AttributeName: aws.String("domain"), KeyType: types.KeyTypeHash},
+		{AttributeName: aws.String("id"), KeyType: types.KeyTypeRange},
+	}, []types.AttributeDefinition{
+		{AttributeName: aws.String("domain"), AttributeType: types.ScalarAttributeTypeS},
+		{AttributeName: aws.String("id"), AttributeType: types.ScalarAttributeTypeS},
+		{AttributeName: aws.String("client_id"), AttributeType: types.ScalarAttributeTypeS},
+	}, []types.GlobalSecondaryIndex{
+		{
+			IndexName: aws.String("client-id-index"),
+			KeySchema: []types.KeySchemaElement{
+				{AttributeName: aws.String("client_id"), KeyType: types.KeyTypeHash},
+			},
+			Projection: &types.Projection{ProjectionType: types.ProjectionTypeAll},
+		},
+	}); err != nil {
+		return err
+	}
+
+	// Create OAuth codes table
+	if err := db.createTableIfNotExists(ctx, oauthCodesTableName, []types.KeySchemaElement{
+		{AttributeName: aws.String("code"), KeyType: types.KeyTypeHash},
+	}, []types.AttributeDefinition{
+		{AttributeName: aws.String("code"), AttributeType: types.ScalarAttributeTypeS},
+	}, nil); err != nil {
+		return err
+	}
+
+	// Create OAuth tokens table
+	if err := db.createTableIfNotExists(ctx, oauthTokensTableName, []types.KeySchemaElement{
+		{AttributeName: aws.String("token"), KeyType: types.KeyTypeHash},
+	}, []types.AttributeDefinition{
+		{AttributeName: aws.String("token"), AttributeType: types.ScalarAttributeTypeS},
 	}, nil); err != nil {
 		return err
 	}
@@ -1206,35 +1257,330 @@ func (db *DbDynamo) unmarshalContact(item map[string]types.AttributeValue) (*mod
 	return c, nil
 }
 
-// --- OAuth operations (not yet implemented for DynamoDB) ---
+// --- Domain operations ---
+
+func (db *DbDynamo) CreateDomain(domain *model.Domain) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	item := map[string]types.AttributeValue{
+		"name":         &types.AttributeValueMemberS{Value: domain.Name},
+		"api_key_hash": &types.AttributeValueMemberS{Value: domain.APIKeyHash},
+		"ses_status":   &types.AttributeValueMemberS{Value: domain.SESStatus},
+		"dkim_status":  &types.AttributeValueMemberS{Value: domain.DKIMStatus},
+		"status":       &types.AttributeValueMemberS{Value: domain.Status},
+		"created_by":   &types.AttributeValueMemberS{Value: domain.CreatedBy},
+		"created_at":   &types.AttributeValueMemberS{Value: now},
+	}
+	_, err := db.client.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String(domainsTableName),
+		Item:      item,
+	})
+	return err
+}
+
+func (db *DbDynamo) GetDomain(name string) (*model.Domain, error) {
+	result, err := db.client.GetItem(context.Background(), &dynamodb.GetItemInput{
+		TableName: aws.String(domainsTableName),
+		Key:       map[string]types.AttributeValue{"name": &types.AttributeValueMemberS{Value: name}},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result.Item == nil {
+		return nil, fmt.Errorf("domain not found: %s", name)
+	}
+	return unmarshalDomain(result.Item), nil
+}
+
+func (db *DbDynamo) ListDomains() ([]*model.Domain, error) {
+	result, err := db.client.Scan(context.Background(), &dynamodb.ScanInput{
+		TableName: aws.String(domainsTableName),
+	})
+	if err != nil {
+		return nil, err
+	}
+	var domains []*model.Domain
+	for _, item := range result.Items {
+		domains = append(domains, unmarshalDomain(item))
+	}
+	return domains, nil
+}
+
+func (db *DbDynamo) UpdateDomainStatus(name, sesStatus, dkimStatus string) error {
+	_, err := db.client.UpdateItem(context.Background(), &dynamodb.UpdateItemInput{
+		TableName: aws.String(domainsTableName),
+		Key:       map[string]types.AttributeValue{"name": &types.AttributeValueMemberS{Value: name}},
+		UpdateExpression: aws.String("SET ses_status = :ss, dkim_status = :ds"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":ss": &types.AttributeValueMemberS{Value: sesStatus},
+			":ds": &types.AttributeValueMemberS{Value: dkimStatus},
+		},
+	})
+	return err
+}
+
+func (db *DbDynamo) DeleteDomain(name string) error {
+	_, err := db.client.DeleteItem(context.Background(), &dynamodb.DeleteItemInput{
+		TableName: aws.String(domainsTableName),
+		Key:       map[string]types.AttributeValue{"name": &types.AttributeValueMemberS{Value: name}},
+	})
+	return err
+}
+
+func unmarshalDomain(item map[string]types.AttributeValue) *model.Domain {
+	d := &model.Domain{}
+	if v, ok := item["name"]; ok {
+		d.Name = v.(*types.AttributeValueMemberS).Value
+	}
+	if v, ok := item["api_key_hash"]; ok {
+		d.APIKeyHash = v.(*types.AttributeValueMemberS).Value
+	}
+	if v, ok := item["ses_status"]; ok {
+		d.SESStatus = v.(*types.AttributeValueMemberS).Value
+	}
+	if v, ok := item["dkim_status"]; ok {
+		d.DKIMStatus = v.(*types.AttributeValueMemberS).Value
+	}
+	if v, ok := item["status"]; ok {
+		d.Status = v.(*types.AttributeValueMemberS).Value
+	}
+	if v, ok := item["created_by"]; ok {
+		d.CreatedBy = v.(*types.AttributeValueMemberS).Value
+	}
+	if v, ok := item["created_at"]; ok {
+		d.CreatedAt, _ = time.Parse(time.RFC3339, v.(*types.AttributeValueMemberS).Value)
+	}
+	return d
+}
+
+// --- OAuth operations ---
 
 func (db *DbDynamo) CreateOAuthClient(client *model.OAuthClient) error {
-	return fmt.Errorf("OAuth not supported on DynamoDB backend")
+	now := time.Now().UTC().Format(time.RFC3339)
+	item := map[string]types.AttributeValue{
+		"domain":       &types.AttributeValueMemberS{Value: client.Domain},
+		"id":           &types.AttributeValueMemberS{Value: client.ID},
+		"name":         &types.AttributeValueMemberS{Value: client.Name},
+		"client_id":    &types.AttributeValueMemberS{Value: client.ClientID},
+		"secret_hash":  &types.AttributeValueMemberS{Value: client.SecretHash},
+		"redirect_uri": &types.AttributeValueMemberS{Value: client.RedirectURI},
+		"created_by":   &types.AttributeValueMemberS{Value: client.CreatedBy},
+		"created_at":   &types.AttributeValueMemberS{Value: now},
+	}
+	_, err := db.client.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String(oauthClientsTableName),
+		Item:      item,
+	})
+	return err
 }
+
 func (db *DbDynamo) GetOAuthClient(clientID string) (*model.OAuthClient, error) {
-	return nil, fmt.Errorf("OAuth not supported on DynamoDB backend")
+	// Use GSI on client_id
+	result, err := db.client.Query(context.Background(), &dynamodb.QueryInput{
+		TableName:              aws.String(oauthClientsTableName),
+		IndexName:              aws.String("client-id-index"),
+		KeyConditionExpression: aws.String("client_id = :cid"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":cid": &types.AttributeValueMemberS{Value: clientID},
+		},
+		Limit: aws.Int32(1),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(result.Items) == 0 {
+		return nil, fmt.Errorf("oauth client not found: %s", clientID)
+	}
+	return unmarshalOAuthClient(result.Items[0]), nil
 }
-func (db *DbDynamo) ListOAuthClients(ownerEmail string) ([]*model.OAuthClient, error) {
-	return nil, fmt.Errorf("OAuth not supported on DynamoDB backend")
+
+func (db *DbDynamo) ListOAuthClients(domain string) ([]*model.OAuthClient, error) {
+	result, err := db.client.Query(context.Background(), &dynamodb.QueryInput{
+		TableName:              aws.String(oauthClientsTableName),
+		KeyConditionExpression: aws.String("domain = :d"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":d": &types.AttributeValueMemberS{Value: domain},
+		},
+		ScanIndexForward: aws.Bool(false),
+	})
+	if err != nil {
+		return nil, err
+	}
+	var clients []*model.OAuthClient
+	for _, item := range result.Items {
+		clients = append(clients, unmarshalOAuthClient(item))
+	}
+	return clients, nil
 }
+
 func (db *DbDynamo) DeleteOAuthClient(id string) error {
-	return fmt.Errorf("OAuth not supported on DynamoDB backend")
+	// Scan to find domain (partition key) since we only have id (sort key)
+	result, err := db.client.Scan(context.Background(), &dynamodb.ScanInput{
+		TableName:            aws.String(oauthClientsTableName),
+		FilterExpression:     aws.String("id = :id"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{":id": &types.AttributeValueMemberS{Value: id}},
+		ProjectionExpression: aws.String("#d, id"),
+		ExpressionAttributeNames: map[string]string{"#d": "domain"},
+	})
+	if err != nil || len(result.Items) == 0 {
+		return fmt.Errorf("oauth client not found: %s", id)
+	}
+	_, err = db.client.DeleteItem(context.Background(), &dynamodb.DeleteItemInput{
+		TableName: aws.String(oauthClientsTableName),
+		Key: map[string]types.AttributeValue{
+			"domain": result.Items[0]["domain"],
+			"id":     result.Items[0]["id"],
+		},
+	})
+	return err
 }
+
+func unmarshalOAuthClient(item map[string]types.AttributeValue) *model.OAuthClient {
+	c := &model.OAuthClient{}
+	if v, ok := item["id"]; ok {
+		c.ID = v.(*types.AttributeValueMemberS).Value
+	}
+	if v, ok := item["name"]; ok {
+		c.Name = v.(*types.AttributeValueMemberS).Value
+	}
+	if v, ok := item["client_id"]; ok {
+		c.ClientID = v.(*types.AttributeValueMemberS).Value
+	}
+	if v, ok := item["secret_hash"]; ok {
+		c.SecretHash = v.(*types.AttributeValueMemberS).Value
+	}
+	if v, ok := item["redirect_uri"]; ok {
+		c.RedirectURI = v.(*types.AttributeValueMemberS).Value
+	}
+	if v, ok := item["domain"]; ok {
+		c.Domain = v.(*types.AttributeValueMemberS).Value
+	}
+	if v, ok := item["created_by"]; ok {
+		c.CreatedBy = v.(*types.AttributeValueMemberS).Value
+	}
+	if v, ok := item["created_at"]; ok {
+		c.CreatedAt, _ = time.Parse(time.RFC3339, v.(*types.AttributeValueMemberS).Value)
+	}
+	return c
+}
+
 func (db *DbDynamo) CreateOAuthCode(code *model.OAuthCode) error {
-	return fmt.Errorf("OAuth not supported on DynamoDB backend")
+	item := map[string]types.AttributeValue{
+		"code":         &types.AttributeValueMemberS{Value: code.Code},
+		"client_id":    &types.AttributeValueMemberS{Value: code.ClientID},
+		"user_email":   &types.AttributeValueMemberS{Value: code.UserEmail},
+		"redirect_uri": &types.AttributeValueMemberS{Value: code.RedirectURI},
+		"scope":        &types.AttributeValueMemberS{Value: code.Scope},
+		"nonce":        &types.AttributeValueMemberS{Value: code.Nonce},
+		"expires_at":   &types.AttributeValueMemberS{Value: code.ExpiresAt.UTC().Format(time.RFC3339)},
+		"used":         &types.AttributeValueMemberBOOL{Value: false},
+	}
+	_, err := db.client.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String(oauthCodesTableName),
+		Item:      item,
+	})
+	return err
 }
+
 func (db *DbDynamo) GetOAuthCode(code string) (*model.OAuthCode, error) {
-	return nil, fmt.Errorf("OAuth not supported on DynamoDB backend")
+	result, err := db.client.GetItem(context.Background(), &dynamodb.GetItemInput{
+		TableName: aws.String(oauthCodesTableName),
+		Key:       map[string]types.AttributeValue{"code": &types.AttributeValueMemberS{Value: code}},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result.Item == nil {
+		return nil, fmt.Errorf("oauth code not found")
+	}
+	c := &model.OAuthCode{}
+	if v, ok := result.Item["code"]; ok {
+		c.Code = v.(*types.AttributeValueMemberS).Value
+	}
+	if v, ok := result.Item["client_id"]; ok {
+		c.ClientID = v.(*types.AttributeValueMemberS).Value
+	}
+	if v, ok := result.Item["user_email"]; ok {
+		c.UserEmail = v.(*types.AttributeValueMemberS).Value
+	}
+	if v, ok := result.Item["redirect_uri"]; ok {
+		c.RedirectURI = v.(*types.AttributeValueMemberS).Value
+	}
+	if v, ok := result.Item["scope"]; ok {
+		c.Scope = v.(*types.AttributeValueMemberS).Value
+	}
+	if v, ok := result.Item["nonce"]; ok {
+		c.Nonce = v.(*types.AttributeValueMemberS).Value
+	}
+	if v, ok := result.Item["expires_at"]; ok {
+		c.ExpiresAt, _ = time.Parse(time.RFC3339, v.(*types.AttributeValueMemberS).Value)
+	}
+	if v, ok := result.Item["used"]; ok {
+		c.Used = v.(*types.AttributeValueMemberBOOL).Value
+	}
+	return c, nil
 }
+
 func (db *DbDynamo) MarkOAuthCodeUsed(code string) error {
-	return fmt.Errorf("OAuth not supported on DynamoDB backend")
+	_, err := db.client.UpdateItem(context.Background(), &dynamodb.UpdateItemInput{
+		TableName: aws.String(oauthCodesTableName),
+		Key:       map[string]types.AttributeValue{"code": &types.AttributeValueMemberS{Value: code}},
+		UpdateExpression: aws.String("SET used = :t"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":t": &types.AttributeValueMemberBOOL{Value: true},
+		},
+	})
+	return err
 }
+
 func (db *DbDynamo) CreateOAuthToken(token *model.OAuthToken) error {
-	return fmt.Errorf("OAuth not supported on DynamoDB backend")
+	item := map[string]types.AttributeValue{
+		"token":      &types.AttributeValueMemberS{Value: token.Token},
+		"client_id":  &types.AttributeValueMemberS{Value: token.ClientID},
+		"user_email": &types.AttributeValueMemberS{Value: token.UserEmail},
+		"scope":      &types.AttributeValueMemberS{Value: token.Scope},
+		"expires_at": &types.AttributeValueMemberS{Value: token.ExpiresAt.UTC().Format(time.RFC3339)},
+	}
+	_, err := db.client.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String(oauthTokensTableName),
+		Item:      item,
+	})
+	return err
 }
+
 func (db *DbDynamo) GetOAuthToken(token string) (*model.OAuthToken, error) {
-	return nil, fmt.Errorf("OAuth not supported on DynamoDB backend")
+	result, err := db.client.GetItem(context.Background(), &dynamodb.GetItemInput{
+		TableName: aws.String(oauthTokensTableName),
+		Key:       map[string]types.AttributeValue{"token": &types.AttributeValueMemberS{Value: token}},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result.Item == nil {
+		return nil, fmt.Errorf("oauth token not found")
+	}
+	t := &model.OAuthToken{}
+	if v, ok := result.Item["token"]; ok {
+		t.Token = v.(*types.AttributeValueMemberS).Value
+	}
+	if v, ok := result.Item["client_id"]; ok {
+		t.ClientID = v.(*types.AttributeValueMemberS).Value
+	}
+	if v, ok := result.Item["user_email"]; ok {
+		t.UserEmail = v.(*types.AttributeValueMemberS).Value
+	}
+	if v, ok := result.Item["scope"]; ok {
+		t.Scope = v.(*types.AttributeValueMemberS).Value
+	}
+	if v, ok := result.Item["expires_at"]; ok {
+		t.ExpiresAt, _ = time.Parse(time.RFC3339, v.(*types.AttributeValueMemberS).Value)
+	}
+	return t, nil
 }
+
 func (db *DbDynamo) DeleteOAuthToken(token string) error {
-	return fmt.Errorf("OAuth not supported on DynamoDB backend")
+	_, err := db.client.DeleteItem(context.Background(), &dynamodb.DeleteItemInput{
+		TableName: aws.String(oauthTokensTableName),
+		Key:       map[string]types.AttributeValue{"token": &types.AttributeValueMemberS{Value: token}},
+	})
+	return err
 }
