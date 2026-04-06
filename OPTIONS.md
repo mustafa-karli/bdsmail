@@ -19,9 +19,40 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for full step-by-step instructions.
 | Backend | Cost | Pros | Cons |
 |---------|------|------|------|
 | PostgreSQL | $10-15/mo (managed) | Full SQL, robust, best query flexibility | Requires managed DB or self-hosted |
-| SQLite | $0 | Zero config, no network dependency | Single-server only |
-| DynamoDB | $0 (always-free tier) | Managed, scalable, 25GB free | AWS only, OAuth not yet supported |
-| Firestore | $0 (free tier) | Managed, 1GB free | GCP only, OAuth not yet supported |
+| SQLite | $0 | Zero config, no network dependency, full-text search | Single-server only |
+| DynamoDB | $0 (always-free tier) | Managed, scalable, 25GB free | No full-text search (scan only) |
+| Firestore | $0 (free tier) | Managed, 1GB free | GCP only, requires composite indexes |
+
+### AWS Lightsail Database Comparison
+
+When deploying on AWS Lightsail, keep all services within AWS to avoid cross-provider egress costs (~$0.09/GB) and latency (10-50ms per query).
+
+| Option | Cost | Latency | Full-Text Search | Managed | Notes |
+|--------|------|---------|-----------------|---------|-------|
+| **SQLite on Lightsail** | $0 forever | 0ms (local disk) | Yes (LIKE, FTS5) | No | Best for single-server |
+| **DynamoDB** | $0 forever | 1-5ms (same region) | No (client-side scan) | Yes | Best for managed + free |
+| **RDS Free Tier** | $0 for 12 months | 1-5ms (same region) | Yes (ILIKE) | Yes | Expires → ~$12/mo |
+| **RDS on Lightsail** | $15/mo | <1ms (internal) | Yes (ILIKE) | Yes | Fully managed, internal network |
+| **Aurora Serverless v2** | ~$43/mo min | 1-5ms | Yes (ILIKE) | Yes | Overkill for mail server |
+
+**Avoid**: Neon, Supabase, CockroachDB, PlanetScale — all hosted outside AWS, adding egress cost and latency.
+
+### DynamoDB Performance by Operation
+
+| Operation | DynamoDB Approach | Performance | Concern |
+|-----------|------------------|-------------|---------|
+| Get message by ID | GSI lookup | Fast (single-digit ms) | None |
+| List messages by folder | Query partition key + filter | Fast | None |
+| Save/delete message | PutItem/DeleteItem | Fast | None |
+| Count unread | Query + client count | Moderate | Reads all messages |
+| **Search messages** | **Full scan + client filter** | **Slow** | **Degrades with mailbox size** |
+| OAuth/domain CRUD | Key lookups | Fast | None |
+
+### Recommendation
+
+**For Lightsail deployment**: Start with **SQLite** (`--db_type=sqlite`). Zero cost, zero latency, full search, single file backup to S3. If you outgrow single-server or need managed ops, migrate to **RDS PostgreSQL** on Lightsail ($15/mo).
+
+**DynamoDB** is viable if you don't need search, or plan to add a dedicated search service (e.g. OpenSearch) later.
 
 ## Object Storage
 
@@ -155,3 +186,33 @@ bdsmail \
 ```
 
 Secrets (`database_url`, `admin_secret`, `relay_host`, `relay_user`, `relay_password`) are loaded from the configured SecretProvider at startup.
+
+---
+
+## Two-Factor Authentication (2FA)
+
+TOTP-based 2FA using the same `github.com/pquerna/otp` library as the basis project.
+
+### Features
+- **TOTP** — Google Authenticator, Authy, or any TOTP app
+- **Backup codes** — 10 one-time codes (bcrypt-hashed, pipe-separated)
+- **Trusted devices** — 30-day bypass via device fingerprint
+- **Login tokens** — 5-minute pending state during 2FA verification
+
+### Flow
+1. User logs in with password
+2. If 2FA enabled and device not trusted → issue login token, redirect to `/verify-2fa`
+3. User enters TOTP code (or backup code)
+4. Optionally trusts device for 30 days
+5. Session created
+
+### Database Tables
+- `user_account` — columns: `twofa_enabled`, `twofa_secret`, `twofa_backup_codes`, `login_attempts`
+- `user_trusted_device` — device fingerprint, 30-day expiry
+- `user_otp` — 6-digit codes, 2-minute expiry, max 5 attempts
+- `login_token` — 5-minute pending 2FA state
+
+### Data Model
+- `user_account.id` is `TEXT` (natural key: `username@domain`), not an auto-increment integer
+- `phone` and `external_email` columns for OTP delivery
+- All child tables reference `user_email` (same value as `user_account.id`)

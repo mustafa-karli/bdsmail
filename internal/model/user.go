@@ -7,11 +7,13 @@ import (
 )
 
 type User struct {
-	ID               int64
+	ID               string // username@domain (natural key)
 	Username         string
 	Domain           string
 	DisplayName      string
 	PasswordHash     string
+	Phone            string // for OTP delivery
+	ExternalEmail    string // contact email (may differ from ID for forwarding)
 	Status           string // A=Active, X=Locked, S=Suspended
 	TwoFAEnabled     bool
 	TwoFASecret      string // Base32 TOTP secret

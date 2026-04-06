@@ -61,7 +61,7 @@
 ### bdsmail
 Single Go binary (~48MB) designed for cost-effective cloud deployment. Dual webmail interface: server-rendered Go templates for zero-dependency access, plus a Vue 3 SPA with full JSON REST API for modern client-side experience. Covers all major email security standards including MTA-STS, DANE, REQUIRETLS, and TLSRPT. Built-in OAuth 2.0 / OpenID Connect identity provider with self-service developer portal — the only mail server offering "Sign in with yourdomain.com." Pluggable database and storage backends across AWS and GCP. Runs on ~$6-20/month.
 
-**Strengths:** Minimal footprint, cloud-native storage, comprehensive email security, single binary, dual webmail (Go templates + Vue SPA), JSON REST API, built-in OIDC identity provider, Google Safe Browsing.
+**Strengths:** Minimal footprint, cloud-native storage, comprehensive email security, single binary, dual webmail (Go templates + Vue SPA), JSON REST API, TOTP 2FA with backup codes and trusted devices, built-in OIDC identity provider, Google Safe Browsing.
 **Gaps:** No CalDAV/calendar, no JMAP, no shared folders, no WYSIWYG editor.
 
 ### iRedMail

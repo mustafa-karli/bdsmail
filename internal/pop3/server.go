@@ -20,12 +20,12 @@ import (
 type Server struct {
 	cfg          *config.Config
 	store        *store.Store
-	certReloader *tlsutil.CertReloader
+	certStore *tlsutil.CertStore
 	listener     net.Listener
 }
 
-func NewServer(cfg *config.Config, s *store.Store, certReloader *tlsutil.CertReloader) *Server {
-	return &Server{cfg: cfg, store: s, certReloader: certReloader}
+func NewServer(cfg *config.Config, s *store.Store, certStore *tlsutil.CertStore) *Server {
+	return &Server{cfg: cfg, store: s, certStore: certStore}
 }
 
 func (s *Server) Start() error {
@@ -33,8 +33,8 @@ func (s *Server) Start() error {
 	log.Printf("POP3 server starting on %s", addr)
 
 	var err error
-	if s.certReloader != nil {
-		s.listener, err = tls.Listen("tcp", addr, s.certReloader.TLSConfig())
+	if s.certStore != nil {
+		s.listener, err = tls.Listen("tcp", addr, s.certStore.TLSConfig())
 	} else {
 		s.listener, err = net.Listen("tcp", addr)
 	}

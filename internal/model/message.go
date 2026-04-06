@@ -3,11 +3,12 @@ package model
 import "time"
 
 type Attachment struct {
-	ID          string `json:"id"`
-	Filename    string `json:"filename"`
-	ContentType string `json:"content_type"`
-	Size        int64  `json:"size"`
-	BucketKey   string `json:"bucket_key"`
+	ID            string `json:"id"`
+	MailContentID string `json:"mailContentId"` // FK to mail_content.id
+	Filename      string `json:"filename"`
+	ContentType   string `json:"content_type"`
+	Size          int64  `json:"size"`
+	BucketKey     string `json:"bucket_key"`
 }
 
 type Message struct {

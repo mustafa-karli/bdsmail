@@ -17,11 +17,11 @@ type AdminHandlers struct {
 	cfg          *config.Config
 	store        *store.Store
 	relay        *smtprelay.Relay
-	certReloader *tlsutil.CertReloader
+	certStore *tlsutil.CertStore
 }
 
-func NewAdminHandlers(cfg *config.Config, s *store.Store, relay *smtprelay.Relay, certReloader *tlsutil.CertReloader) *AdminHandlers {
-	return &AdminHandlers{cfg: cfg, store: s, relay: relay, certReloader: certReloader}
+func NewAdminHandlers(cfg *config.Config, s *store.Store, relay *smtprelay.Relay, certStore *tlsutil.CertStore) *AdminHandlers {
+	return &AdminHandlers{cfg: cfg, store: s, relay: relay, certStore: certStore}
 }
 
 type adminPageData struct {
@@ -72,7 +72,7 @@ func (ah *AdminHandlers) HandleAdminDomains(w http.ResponseWriter, r *http.Reque
 
 	if r.Method == http.MethodPost && r.FormValue("admin_action") == "add_domain" {
 		domain := strings.TrimSpace(r.FormValue("domain"))
-		result, err := admin.RegisterDomain(ah.cfg, ah.relay, ah.certReloader, domain)
+		result, err := admin.RegisterDomain(ah.cfg, ah.relay, ah.certStore, domain)
 		if err != nil {
 			data.Error = err.Error()
 		} else {
@@ -110,7 +110,7 @@ func (ah *AdminHandlers) HandleAdminAPI(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	result, err := admin.RegisterDomain(ah.cfg, ah.relay, ah.certReloader, req.Domain)
+	result, err := admin.RegisterDomain(ah.cfg, ah.relay, ah.certStore, req.Domain)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})

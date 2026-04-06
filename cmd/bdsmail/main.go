@@ -144,14 +144,16 @@ func main() {
 		})
 	}
 
-	// Initialize TLS cert reloader (if TLS is configured)
-	var certReloader *tlsutil.CertReloader
-	if cfg.TLSCert != "" && cfg.TLSKey != "" {
+	// Initialize TLS cert store (per-domain SNI certificates)
+	var certStore *tlsutil.CertStore
+	if cfg.SSLDir != "" {
 		var tlsErr error
-		certReloader, tlsErr = tlsutil.NewCertReloader(cfg.TLSCert, cfg.TLSKey)
+		certStore, tlsErr = tlsutil.NewCertStore(cfg.SSLDir)
 		if tlsErr != nil {
-			log.Printf("warning: TLS cert reloader failed, running without TLS: %v", tlsErr)
-			certReloader = nil
+			log.Printf("warning: TLS cert store failed, running without TLS: %v", tlsErr)
+			certStore = nil
+		} else if !certStore.HasCerts() {
+			log.Printf("warning: no TLS certificates found in %s", cfg.SSLDir)
 		}
 	}
 
@@ -159,7 +161,7 @@ func main() {
 	go startACMEServer(cfg)
 
 	// Start SMTP server
-	smtpSrv := smtpserver.NewServer(cfg, s, checker, relay, certReloader)
+	smtpSrv := smtpserver.NewServer(cfg, s, checker, relay, certStore)
 	go func() {
 		if err := smtpSrv.Start(); err != nil {
 			log.Printf("SMTP server error: %v", err)
@@ -167,7 +169,7 @@ func main() {
 	}()
 
 	// Start POP3 server
-	pop3Srv := pop3.NewServer(cfg, s, certReloader)
+	pop3Srv := pop3.NewServer(cfg, s, certStore)
 	go func() {
 		if err := pop3Srv.Start(); err != nil {
 			log.Printf("POP3 server error: %v", err)
@@ -175,7 +177,7 @@ func main() {
 	}()
 
 	// Start IMAP server
-	imapSrv := imap.NewServer(cfg, s, certReloader)
+	imapSrv := imap.NewServer(cfg, s, certStore)
 	go func() {
 		if err := imapSrv.Start(); err != nil {
 			log.Printf("IMAP server error: %v", err)
@@ -183,7 +185,7 @@ func main() {
 	}()
 
 	// Start web server
-	webSrv, err := web.NewServer(cfg, s, relay, checker, certReloader)
+	webSrv, err := web.NewServer(cfg, s, relay, checker, certStore)
 	if err != nil {
 		log.Fatalf("Failed to initialize web server: %v", err)
 	}

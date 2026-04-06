@@ -412,24 +412,237 @@ BDS_S3_BUCKET=your-bucket-name
 
 ---
 
-## Option 4: Single VM with SQLite (Simplest)
+## Option 4: AWS Self-Hosted PostgreSQL + SES + S3 (Recommended Startup)
 
-**Cost: ~$5-10/month** — Zero external dependencies, everything on one server.
+**Cost: ~$5-6/month** — Full SQL, zero managed DB cost, proven migration path to RDS when demand grows.
 
-Works on any Linux VPS (Lightsail, DigitalOcean, Linode, Hetzner, etc.).
+Everything runs on a single Lightsail instance: app + PostgreSQL + backups to S3.
+
+| Component | Service | Cost |
+|-----------|---------|------|
+| Compute + DB + IP | Lightsail $5 plan (app + PostgreSQL) | $5.00 |
+| Attachments | S3 (5GB free tier) | ~$0.02 |
+| Outbound relay | Amazon SES | ~$0.10/1K emails |
+| Backups | S3 (pg_dump gzip) | ~$0.02 |
+| **Total** | | **~$5-6/month** |
+
+### 1. Create Lightsail Instance
 
 ```bash
-BDS_DB_TYPE=sqlite
-BDS_SQLITE_PATH=/opt/bdsmail/bdsmail.db
+aws lightsail create-instances \
+    --instance-names bdsmail \
+    --availability-zone us-east-1a \
+    --blueprint-id debian_12 \
+    --bundle-id nano_3_2
+
+aws lightsail allocate-static-ip --static-ip-name bdsmail-ip
+aws lightsail attach-static-ip --static-ip-name bdsmail-ip --instance-name bdsmail
+
+for PORT in 25 80 110 143 443; do
+    aws lightsail open-instance-public-ports \
+        --instance-name bdsmail \
+        --port-info fromPort=$PORT,toPort=$PORT,protocol=tcp
+done
 ```
 
-No database setup needed. The SQLite file is created automatically on first startup. Back up by copying the `.db` file.
+### 2. Install PostgreSQL
+
+```bash
+ssh admin@<lightsail-ip>
+sudo -i
+
+apt-get update && apt-get install -y postgresql postgresql-client
+systemctl enable postgresql && systemctl start postgresql
+
+sudo -u postgres psql << 'SQL'
+CREATE USER bdsmail WITH PASSWORD 'your-secure-password';
+CREATE DATABASE bdsmail OWNER bdsmail;
+SQL
+
+echo "local bdsmail bdsmail md5" >> /etc/postgresql/*/main/pg_hba.conf
+systemctl reload postgresql
+```
+
+### 3. Initialize Database
+
+```bash
+# From dev machine — upload SQL and initialize
+scp sql/bdsmail_pgsql.sql admin@<lightsail-ip>:/opt/bdsmail/sql/
+
+# On the server
+psql -U bdsmail -d bdsmail -f /opt/bdsmail/sql/bdsmail_pgsql.sql
+```
+
+### 4. Configure Backup to S3
+
+The backup script (`scripts/backup.sh`) dumps PostgreSQL daily, uploads to S3, rotates local (7 days) and remote (30 days).
+
+```bash
+# From dev machine — upload scripts
+scp -r scripts admin@<lightsail-ip>:/opt/bdsmail/scripts/
+
+# On the server — set up daily cron at 3 AM
+echo "0 3 * * * /opt/bdsmail/scripts/backup.sh your-bdsmail-backup-bucket >> /var/log/bdsmail-backup.log 2>&1" | crontab -
+
+# Test backup manually
+/opt/bdsmail/scripts/backup.sh your-bdsmail-backup-bucket
+```
+
+### 5. Build and Deploy bdsmail
+
+From your dev machine:
+
+```bash
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/bdsmail ./cmd/bdsmail/
+
+scp bin/bdsmail admin@<lightsail-ip>:/opt/bdsmail/bin/
+scp -r web/templates admin@<lightsail-ip>:/opt/bdsmail/web/templates/
+scp -r web/static admin@<lightsail-ip>:/opt/bdsmail/web/static/
+```
+
+### 6. Deploy Vue Frontend
+
+**Option A: Same instance (embedded)**
+
+```bash
+cd web/vue && npm install && npm run build
+scp -r web/vue/dist admin@<lightsail-ip>:/opt/bdsmail/web/vue/dist/
+```
+
+Go server serves the Vue SPA at `/app/` automatically.
+
+**Option B: AWS Amplify (CDN)**
+
+```bash
+cd web/vue && npm install && npm run build
+npm install -g @aws-amplify/cli
+amplify init && amplify add hosting && amplify publish
+```
+
+Each domain gets `webmail.domain.com` CNAME → Amplify URL. Add `--amplify_url` flag to systemd service.
+
+### 7. Create Systemd Service
+
+```bash
+cat > /etc/systemd/system/bdsmail.service << 'SERVICE'
+[Unit]
+Description=BDS Mail Server
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/bdsmail
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+ExecStart=/opt/bdsmail/bin/bdsmail \
+  --db_type=postgres \
+  --smtp_port=25 \
+  --pop3_port=110 \
+  --imap_port=143 \
+  --https_port=443 \
+  --http_port=80 \
+  --dkim_key_dir=/opt/bdsmail/dkim \
+  --acme_webroot=/opt/bdsmail/acme \
+  --bucket_type=s3 \
+  --s3_bucket=your-bucket-name \
+  --s3_region=us-east-1 \
+  --secret_mode=local \
+  --keystore=/opt/bdsmail/sec/secrets.json
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+# Create secrets file
+mkdir -p /opt/bdsmail/sec
+cat > /opt/bdsmail/sec/secrets.json << 'SECRETS'
+{
+  "database_url": "postgres://bdsmail:your-secure-password@localhost:5432/bdsmail?sslmode=disable",
+  "admin_secret": "your-admin-secret",
+  "relay_host": "email-smtp.us-east-1.amazonaws.com",
+  "relay_user": "your-ses-smtp-username",
+  "relay_password": "your-ses-smtp-password"
+}
+SECRETS
+chmod 600 /opt/bdsmail/sec/secrets.json
+
+systemctl daemon-reload
+systemctl enable bdsmail
+systemctl start bdsmail
+```
+
+### Migration to RDS (when demand grows)
+
+When you need managed PostgreSQL, migrate in 15 minutes:
+
+```bash
+# Dump from self-hosted
+sudo -u postgres pg_dump -Fc bdsmail > bdsmail.dump
+
+# Create RDS instance
+aws rds create-db-instance \
+    --db-instance-identifier bdsmail-db \
+    --db-instance-class db.t4g.micro \
+    --engine postgres --allocated-storage 20 \
+    --master-username bdsmail --master-user-password 'password'
+
+# Restore to RDS
+pg_restore -h <rds-endpoint> -U bdsmail -d bdsmail bdsmail.dump
+
+# Update secrets.json with new database_url, restart service
+```
+
+---
+
+## Database Initialization
+
+Database tables must be created before starting the application. DDL scripts are in the `sql/` folder.
+
+### PostgreSQL
+
+```bash
+psql "postgres://bdsmail:password@localhost:5432/bdsmail" -f sql/bdsmail_pgsql.sql
+```
+
+### SQLite
+
+```bash
+sqlite3 /opt/bdsmail/bdsmail.db < sql/bdsmail_sqlite.sql
+```
+
+### DynamoDB
+
+```bash
+go run internal/store/init_dynamodb.go --region us-east-1
+```
+
+### Firestore
+
+Collections are created automatically on first write. Create the database and indexes:
+
+```bash
+# Create database (one-time)
+gcloud firestore databases create --location=us-west1
+
+# Create composite indexes (see sql/bdsmail_firestore.md for full list)
+gcloud firestore indexes composite create \
+  --collection-group=bdsmail-messages \
+  --field-config field-path=owner_user,order=ASCENDING \
+  --field-config field-path=folder,order=ASCENDING \
+  --field-config field-path=deleted,order=ASCENDING \
+  --field-config field-path=received_at,order=DESCENDING
+```
+
+All scripts are idempotent and safe to re-run.
 
 ---
 
 ## Post-Deployment Checklist
 
-1. Add DNS records (A, MX, SPF, DMARC) for each domain
+1. Initialize database (see above)
+2. Add DNS records (A, MX, SPF, DMARC) for each domain
 2. Add DKIM record printed by deploy script
 3. Create users: `./bdsmail -adduser user@domain.com -password 'pass' -displayname 'Name'`
 4. Test web UI: `https://mail.yourdomain.com`
@@ -451,8 +664,7 @@ All configuration via CLI flags. Secrets loaded from SecretProvider (`--secret_m
 | `BDS_IMAP_PORT` | IMAP port | `1430` |
 | `BDS_HTTPS_PORT` | HTTPS port | `8443` |
 | `BDS_HTTP_PORT` | HTTP port (ACME) | `8080` |
-| `BDS_TLS_CERT` | TLS certificate path | (none) |
-| `BDS_TLS_KEY` | TLS key path | (none) |
+| `--ssl_dir` | Per-domain SSL certificate directory | `/opt/bdsmail/ssl` |
 | `BDS_DB_TYPE` | `postgres`, `sqlite`, `dynamodb`, `firestore` | `postgres` |
 | `DATABASE_URL` | PostgreSQL connection string | (none) |
 | `BDS_SQLITE_PATH` | SQLite file path | `/opt/bdsmail/bdsmail.db` |
@@ -622,7 +834,7 @@ When you add a domain, the server performs these steps in sequence:
 | 3 | **Verify in SES** | Calls AWS SES API: `VerifyDomainIdentity` + `VerifyDomainDkim` |
 | 4 | **Generate API key** | Creates 64-char hex key for this domain |
 | 5 | **Add to config** | Domain added to running server (no restart) |
-| 6 | **Expand TLS cert** | Runs `certbot --expand` to add `mail.newdomain.com` |
+| 6 | **Issue TLS cert** | Runs `certbot certonly -d mail.newdomain.com` per domain, copies to `/opt/bdsmail/ssl/<domain>/` |
 | 7 | **Persist to .env** | Updates `BDS_DOMAINS=` in env file |
 | 8 | **Return DNS records** | Full list of records the user needs to add |
 

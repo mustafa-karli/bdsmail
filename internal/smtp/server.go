@@ -16,7 +16,7 @@ type Server struct {
 	srv *gosmtp.Server
 }
 
-func NewServer(cfg *config.Config, s *store.Store, checker *security.Checker, relay *Relay, certReloader *tlsutil.CertReloader) *Server {
+func NewServer(cfg *config.Config, s *store.Store, checker *security.Checker, relay *Relay, certStore *tlsutil.CertStore) *Server {
 	backend := NewBackend(s, checker, relay, cfg)
 
 	srv := gosmtp.NewServer(backend)
@@ -31,8 +31,8 @@ func NewServer(cfg *config.Config, s *store.Store, checker *security.Checker, re
 	srv.AllowInsecureAuth = true
 	srv.EnableREQUIRETLS = true
 
-	if certReloader != nil {
-		srv.TLSConfig = certReloader.TLSConfig()
+	if certStore != nil {
+		srv.TLSConfig = certStore.TLSConfig()
 	}
 
 	return &Server{srv: srv}

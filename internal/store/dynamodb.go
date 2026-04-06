@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -47,9 +46,6 @@ func NewDbDynamo(region string) (*DbDynamo, error) {
 	}
 	client := dynamodb.NewFromConfig(cfg)
 	db := &DbDynamo{client: client}
-	if err := db.ensureTables(); err != nil {
-		return nil, err
-	}
 	return db, nil
 }
 
@@ -61,193 +57,7 @@ func (db *DbDynamo) GetQueries() map[string]string {
 	return nil // DynamoDB does not use SQL queries
 }
 
-func (db *DbDynamo) ensureTables() error {
-	ctx := context.Background()
-
-	// Create users table
-	if err := db.createTableIfNotExists(ctx, usersTableName, []types.KeySchemaElement{
-		{AttributeName: aws.String("email"), KeyType: types.KeyTypeHash},
-	}, []types.AttributeDefinition{
-		{AttributeName: aws.String("email"), AttributeType: types.ScalarAttributeTypeS},
-	}, nil); err != nil {
-		return err
-	}
-
-	// Create messages table with GSI for folder queries
-	if err := db.createTableIfNotExists(ctx, messagesTableName, []types.KeySchemaElement{
-		{AttributeName: aws.String("owner_user"), KeyType: types.KeyTypeHash},
-		{AttributeName: aws.String("sort_key"), KeyType: types.KeyTypeRange},
-	}, []types.AttributeDefinition{
-		{AttributeName: aws.String("owner_user"), AttributeType: types.ScalarAttributeTypeS},
-		{AttributeName: aws.String("sort_key"), AttributeType: types.ScalarAttributeTypeS},
-		{AttributeName: aws.String("folder"), AttributeType: types.ScalarAttributeTypeS},
-		{AttributeName: aws.String("id"), AttributeType: types.ScalarAttributeTypeS},
-	}, []types.GlobalSecondaryIndex{
-		{
-			IndexName: aws.String(folderIndexName),
-			KeySchema: []types.KeySchemaElement{
-				{AttributeName: aws.String("owner_user"), KeyType: types.KeyTypeHash},
-				{AttributeName: aws.String("folder"), KeyType: types.KeyTypeRange},
-			},
-			Projection: &types.Projection{ProjectionType: types.ProjectionTypeAll},
-		},
-		{
-			IndexName: aws.String("id-index"),
-			KeySchema: []types.KeySchemaElement{
-				{AttributeName: aws.String("id"), KeyType: types.KeyTypeHash},
-			},
-			Projection: &types.Projection{ProjectionType: types.ProjectionTypeAll},
-		},
-	}); err != nil {
-		return err
-	}
-
-	// Create aliases table
-	if err := db.createTableIfNotExists(ctx, aliasesTableName, []types.KeySchemaElement{
-		{AttributeName: aws.String("alias_email"), KeyType: types.KeyTypeHash},
-	}, []types.AttributeDefinition{
-		{AttributeName: aws.String("alias_email"), AttributeType: types.ScalarAttributeTypeS},
-	}, nil); err != nil {
-		return err
-	}
-
-	// Create mailing lists table
-	if err := db.createTableIfNotExists(ctx, mailingListsTableName, []types.KeySchemaElement{
-		{AttributeName: aws.String("list_address"), KeyType: types.KeyTypeHash},
-	}, []types.AttributeDefinition{
-		{AttributeName: aws.String("list_address"), AttributeType: types.ScalarAttributeTypeS},
-	}, nil); err != nil {
-		return err
-	}
-
-	// Create list members table
-	if err := db.createTableIfNotExists(ctx, listMembersTableName, []types.KeySchemaElement{
-		{AttributeName: aws.String("list_address"), KeyType: types.KeyTypeHash},
-		{AttributeName: aws.String("member_email"), KeyType: types.KeyTypeRange},
-	}, []types.AttributeDefinition{
-		{AttributeName: aws.String("list_address"), AttributeType: types.ScalarAttributeTypeS},
-		{AttributeName: aws.String("member_email"), AttributeType: types.ScalarAttributeTypeS},
-	}, nil); err != nil {
-		return err
-	}
-
-	// Create filters table
-	if err := db.createTableIfNotExists(ctx, filtersTableName, []types.KeySchemaElement{
-		{AttributeName: aws.String("user_email"), KeyType: types.KeyTypeHash},
-		{AttributeName: aws.String("id"), KeyType: types.KeyTypeRange},
-	}, []types.AttributeDefinition{
-		{AttributeName: aws.String("user_email"), AttributeType: types.ScalarAttributeTypeS},
-		{AttributeName: aws.String("id"), AttributeType: types.ScalarAttributeTypeS},
-	}, nil); err != nil {
-		return err
-	}
-
-	// Create auto-replies table
-	if err := db.createTableIfNotExists(ctx, autoRepliesTableName, []types.KeySchemaElement{
-		{AttributeName: aws.String("user_email"), KeyType: types.KeyTypeHash},
-	}, []types.AttributeDefinition{
-		{AttributeName: aws.String("user_email"), AttributeType: types.ScalarAttributeTypeS},
-	}, nil); err != nil {
-		return err
-	}
-
-	// Create auto-reply log table
-	if err := db.createTableIfNotExists(ctx, autoReplyLogTableName, []types.KeySchemaElement{
-		{AttributeName: aws.String("user_email"), KeyType: types.KeyTypeHash},
-		{AttributeName: aws.String("sender_email"), KeyType: types.KeyTypeRange},
-	}, []types.AttributeDefinition{
-		{AttributeName: aws.String("user_email"), AttributeType: types.ScalarAttributeTypeS},
-		{AttributeName: aws.String("sender_email"), AttributeType: types.ScalarAttributeTypeS},
-	}, nil); err != nil {
-		return err
-	}
-
-	// Create contacts table
-	if err := db.createTableIfNotExists(ctx, contactsTableName, []types.KeySchemaElement{
-		{AttributeName: aws.String("owner_email"), KeyType: types.KeyTypeHash},
-		{AttributeName: aws.String("id"), KeyType: types.KeyTypeRange},
-	}, []types.AttributeDefinition{
-		{AttributeName: aws.String("owner_email"), AttributeType: types.ScalarAttributeTypeS},
-		{AttributeName: aws.String("id"), AttributeType: types.ScalarAttributeTypeS},
-	}, nil); err != nil {
-		return err
-	}
-
-	// Create domains table
-	if err := db.createTableIfNotExists(ctx, domainsTableName, []types.KeySchemaElement{
-		{AttributeName: aws.String("name"), KeyType: types.KeyTypeHash},
-	}, []types.AttributeDefinition{
-		{AttributeName: aws.String("name"), AttributeType: types.ScalarAttributeTypeS},
-	}, nil); err != nil {
-		return err
-	}
-
-	// Create OAuth clients table (partition: domain, sort: id)
-	if err := db.createTableIfNotExists(ctx, oauthClientsTableName, []types.KeySchemaElement{
-		{AttributeName: aws.String("domain"), KeyType: types.KeyTypeHash},
-		{AttributeName: aws.String("id"), KeyType: types.KeyTypeRange},
-	}, []types.AttributeDefinition{
-		{AttributeName: aws.String("domain"), AttributeType: types.ScalarAttributeTypeS},
-		{AttributeName: aws.String("id"), AttributeType: types.ScalarAttributeTypeS},
-		{AttributeName: aws.String("client_id"), AttributeType: types.ScalarAttributeTypeS},
-	}, []types.GlobalSecondaryIndex{
-		{
-			IndexName: aws.String("client-id-index"),
-			KeySchema: []types.KeySchemaElement{
-				{AttributeName: aws.String("client_id"), KeyType: types.KeyTypeHash},
-			},
-			Projection: &types.Projection{ProjectionType: types.ProjectionTypeAll},
-		},
-	}); err != nil {
-		return err
-	}
-
-	// Create OAuth codes table
-	if err := db.createTableIfNotExists(ctx, oauthCodesTableName, []types.KeySchemaElement{
-		{AttributeName: aws.String("code"), KeyType: types.KeyTypeHash},
-	}, []types.AttributeDefinition{
-		{AttributeName: aws.String("code"), AttributeType: types.ScalarAttributeTypeS},
-	}, nil); err != nil {
-		return err
-	}
-
-	// Create OAuth tokens table
-	if err := db.createTableIfNotExists(ctx, oauthTokensTableName, []types.KeySchemaElement{
-		{AttributeName: aws.String("token"), KeyType: types.KeyTypeHash},
-	}, []types.AttributeDefinition{
-		{AttributeName: aws.String("token"), AttributeType: types.ScalarAttributeTypeS},
-	}, nil); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (db *DbDynamo) createTableIfNotExists(ctx context.Context, tableName string, keySchema []types.KeySchemaElement, attrDefs []types.AttributeDefinition, gsis []types.GlobalSecondaryIndex) error {
-	_, err := db.client.DescribeTable(ctx, &dynamodb.DescribeTableInput{
-		TableName: aws.String(tableName),
-	})
-	if err == nil {
-		return nil // table exists
-	}
-
-	input := &dynamodb.CreateTableInput{
-		TableName:            aws.String(tableName),
-		KeySchema:            keySchema,
-		AttributeDefinitions: attrDefs,
-		BillingMode:          types.BillingModePayPerRequest,
-	}
-	if len(gsis) > 0 {
-		input.GlobalSecondaryIndexes = gsis
-	}
-
-	_, err = db.client.CreateTable(ctx, input)
-	if err != nil {
-		return fmt.Errorf("failed to create table %s: %w", tableName, err)
-	}
-	log.Printf("Created DynamoDB table: %s", tableName)
-	return nil
-}
+// Table creation is handled by sql/init_dynamodb.go during deployment.
 
 // User operations
 
@@ -327,7 +137,6 @@ func (db *DbDynamo) SaveMessage(msg *model.Message) error {
 		Subject:     msg.Subject,
 		ContentType: msg.ContentType,
 		Body:        msg.Body,
-		Attachments: db.MarshalAttachments(msg.Attachments),
 		GCSKey:      msg.GCSKey,
 		Folder:      msg.Folder,
 		Seen:        msg.Seen,
@@ -1256,6 +1065,19 @@ func (db *DbDynamo) unmarshalContact(item map[string]types.AttributeValue) (*mod
 	}
 	return c, nil
 }
+
+// --- Attachment operations (stub for DynamoDB) ---
+
+func (db *DbDynamo) SaveAttachment(att *model.Attachment) error {
+	return fmt.Errorf("attachment store not yet implemented for DynamoDB")
+}
+func (db *DbDynamo) ListAttachments(mailContentID string) ([]model.Attachment, error) {
+	return nil, nil
+}
+func (db *DbDynamo) GetAttachment(id string) (*model.Attachment, error) {
+	return nil, fmt.Errorf("attachment not found")
+}
+func (db *DbDynamo) DeleteAttachmentsByMessage(mailContentID string) error { return nil }
 
 // --- Auth / 2FA operations (stub — full implementation needed for DynamoDB) ---
 

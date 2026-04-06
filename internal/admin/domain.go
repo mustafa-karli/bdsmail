@@ -48,7 +48,7 @@ type DomainResult struct {
 // 6. Expands TLS certificate (if certbot is available)
 // 7. Persists config to .env
 // 8. Returns DNS records, SES status, API key
-func RegisterDomain(cfg *config.Config, relay *smtpserver.Relay, certReloader *tlsutil.CertReloader, domain string) (*DomainResult, error) {
+func RegisterDomain(cfg *config.Config, relay *smtpserver.Relay, certStore *tlsutil.CertStore, domain string) (*DomainResult, error) {
 	domain = strings.TrimSpace(strings.ToLower(domain))
 	if domain == "" {
 		return nil, fmt.Errorf("domain cannot be empty")
@@ -127,8 +127,8 @@ func RegisterDomain(cfg *config.Config, relay *smtpserver.Relay, certReloader *t
 	// Add domain to config
 	cfg.AddDomain(domain)
 
-	// Expand TLS certificate
-	expandTLSCert(cfg, certReloader)
+	// Issue per-domain TLS certificate
+	issueDomainCert(cfg, certStore, domain)
 
 	// Domain is persisted in the database (domain table), not .env
 
@@ -232,36 +232,61 @@ func extractPublicKey(keyPath string) (string, error) {
 	return base64.StdEncoding.EncodeToString(pubDER), nil
 }
 
-func expandTLSCert(cfg *config.Config, certReloader *tlsutil.CertReloader) {
-	if cfg.TLSCert == "" || certReloader == nil {
+// issueDomainCert issues a per-domain TLS certificate via certbot and loads it into the CertStore.
+// Each domain gets its own cert at <SSLDir>/<domain>/fullchain.pem + privkey.pem.
+// If certbot fails for this domain, other domains are unaffected.
+func issueDomainCert(cfg *config.Config, certStore *tlsutil.CertStore, domain string) {
+	if cfg.SSLDir == "" || certStore == nil {
 		return
 	}
 
-	// Check if certbot is available
 	if _, err := exec.LookPath("certbot"); err != nil {
-		log.Println("certbot not found, skipping TLS certificate expansion")
+		log.Println("certbot not found, skipping TLS certificate issuance")
 		return
 	}
 
-	// Build certbot command with all domains
-	domains := cfg.GetDomains()
-	args := []string{"certonly", "--expand", "--webroot", "-w", cfg.AcmeWebroot, "--non-interactive", "--agree-tos"}
-	for _, d := range domains {
-		args = append(args, "-d", "mail."+d)
-	}
+	certName := domain
+	mailDomain := "mail." + domain
 
-	log.Printf("Expanding TLS certificate for domains: %v", domains)
-	cmd := exec.Command("certbot", args...)
+	log.Printf("Issuing TLS certificate for %s", mailDomain)
+	cmd := exec.Command("certbot", "certonly",
+		"--webroot", "-w", cfg.AcmeWebroot,
+		"-d", mailDomain,
+		"--cert-name", certName,
+		"--non-interactive", "--agree-tos",
+	)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		log.Printf("warning: certbot expand failed: %v", err)
+		log.Printf("warning: certbot failed for %s: %v", domain, err)
 		return
 	}
 
-	// Reload the certificate
-	if err := certReloader.Reload(); err != nil {
-		log.Printf("warning: TLS cert reload failed: %v", err)
+	// Copy cert files to SSL directory
+	sslDir := filepath.Join(cfg.SSLDir, domain)
+	if err := os.MkdirAll(sslDir, 0700); err != nil {
+		log.Printf("warning: cannot create SSL dir %s: %v", sslDir, err)
+		return
+	}
+
+	letsencryptDir := filepath.Join("/etc/letsencrypt/live", certName)
+	for _, name := range []string{"fullchain.pem", "privkey.pem"} {
+		src := filepath.Join(letsencryptDir, name)
+		dst := filepath.Join(sslDir, name)
+		data, err := os.ReadFile(src)
+		if err != nil {
+			log.Printf("warning: cannot read %s: %v", src, err)
+			return
+		}
+		if err := os.WriteFile(dst, data, 0600); err != nil {
+			log.Printf("warning: cannot write %s: %v", dst, err)
+			return
+		}
+	}
+
+	// Hot-load into CertStore — no restart needed, no other domains affected
+	if err := certStore.LoadDomain(domain); err != nil {
+		log.Printf("warning: failed to load cert for %s: %v", domain, err)
 	}
 }
 

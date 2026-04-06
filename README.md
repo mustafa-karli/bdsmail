@@ -205,14 +205,40 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for security configuration details.
 
 ```mermaid
 erDiagram
-    mail_content }o--|| user_account : "owner_user"
-    mail_filter }o--|| user_account : "user_email"
-    user_contact }o--|| user_account : "owner_email"
-    auto_reply |o--|| user_account : "user_email"
-    auto_reply_log }o--|| user_account : "user_email"
+    domain ||--o{ oauth_client : "domain"
+    oauth_client ||--o{ oauth_code : "client_id"
+    oauth_client ||--o{ oauth_token : "client_id"
+    user_account |o--|| domain : "domain"
+    user_account ||--o{ user_contact : "owner_email"
+    user_account ||--o{ mail_filter : "user_email"
+    mail_content ||--o{ mail_attachment: "mail_attachments"
+    user_account ||--o{ mail_content : "owner_user"
     user_trusted_device }o--|| user_account : "user_email"
     user_otp }o--|| user_account : "user_email"
     login_token }o--|| user_account : "user_email"
+    auto_reply }o--|| user_account : "user_email"
+    auto_reply_log }o--|| user_account : "user_email"
+
+    domain {
+        TEXT name PK
+        TEXT api_key_hash
+        TEXT ses_status
+        TEXT dkim_status
+        TEXT status
+        TEXT created_by
+        TIMESTAMPTZ created_at
+    }
+
+    oauth_client {
+        TEXT id PK
+        TEXT name
+        TEXT client_id UK
+        TEXT secret_hash
+        TEXT redirect_uri
+        TEXT domain FK
+        TEXT created_by
+        TIMESTAMPTZ created_at
+    }
 
     mail_content {
         TEXT id PK
@@ -221,12 +247,20 @@ erDiagram
         TEXT to_addrs
         TEXT subject
         TEXT body
-        TEXT attachments
         TEXT owner_user FK
         TEXT folder
         BOOLEAN seen
         BOOLEAN deleted
         TIMESTAMPTZ received_at
+    }
+
+    mail_attachment {
+        TEXT id PK
+        TEXT mail_content_id FK
+        TEXT filename
+        TEXT content_type
+        BIGINT size
+        TEXT bucket_key
     }
 
     mail_filter {
@@ -248,11 +282,13 @@ erDiagram
     }
 
     user_account {
-        SERIAL id PK
+        TEXT id PK
         TEXT username
         TEXT domain
         TEXT display_name
         TEXT password_hash
+        TEXT phone
+        TEXT external_email
         TEXT status
         BOOLEAN twofa_enabled
         TEXT twofa_secret
@@ -298,43 +334,6 @@ erDiagram
         TEXT user_email FK
         TIMESTAMPTZ expires_at
     }
-```
-
-### Domain & OAuth
-
-```mermaid
-erDiagram
-    user_account }o--|| domain : "domain"
-    oauth_client }o--|| domain : "domain"
-    oauth_client ||--o{ oauth_code : "client_id"
-    oauth_client ||--o{ oauth_token : "client_id"
-
-    user_account {
-        SERIAL id PK
-        TEXT username
-        TEXT domain FK
-    }
-
-    domain {
-        TEXT name PK
-        TEXT api_key_hash
-        TEXT ses_status
-        TEXT dkim_status
-        TEXT status
-        TEXT created_by
-        TIMESTAMPTZ created_at
-    }
-
-    oauth_client {
-        TEXT id PK
-        TEXT name
-        TEXT client_id UK
-        TEXT secret_hash
-        TEXT redirect_uri
-        TEXT domain FK
-        TEXT created_by
-        TIMESTAMPTZ created_at
-    }
 
     oauth_code {
         TEXT code PK
@@ -353,6 +352,7 @@ erDiagram
         TEXT scope
         TIMESTAMPTZ expires_at
     }
+
 ```
 
 ### Mailing Lists & Aliases

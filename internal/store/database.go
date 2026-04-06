@@ -75,6 +75,12 @@ const (
 	QUpdateContact = "update_contact"
 	QDeleteContact = "delete_contact"
 
+	// Attachments
+	QSaveAttachment       = "save_attachment"
+	QListAttachments      = "list_attachments"
+	QGetAttachment        = "get_attachment"
+	QDeleteAttachmentsByMsg = "delete_attachments_by_msg"
+
 	// Auth / 2FA
 	QEnable2FA          = "enable_2fa"
 	QDisable2FA         = "disable_2fa"
@@ -184,6 +190,13 @@ type ContactStore interface {
 	DeleteContact(id string) error
 }
 
+type AttachmentStore interface {
+	SaveAttachment(att *model.Attachment) error
+	ListAttachments(mailContentID string) ([]model.Attachment, error)
+	GetAttachment(id string) (*model.Attachment, error)
+	DeleteAttachmentsByMessage(mailContentID string) error
+}
+
 type AuthStore interface {
 	Enable2FA(email, secret, backupCodes string) error
 	Disable2FA(email string) error
@@ -234,6 +247,7 @@ type Database interface {
 	FilterStore
 	AutoReplyStore
 	ContactStore
+	AttachmentStore
 	AuthStore
 	DomainStore
 	OAuthStore
@@ -241,12 +255,19 @@ type Database interface {
 
 // NoSQL document structs — shared by DynamoDB and Firestore via dual tags.
 type docUser struct {
-	Email        string `dynamodbav:"email" firestore:"email"`
-	Username     string `dynamodbav:"username" firestore:"username"`
-	Domain       string `dynamodbav:"domain" firestore:"domain"`
-	DisplayName  string `dynamodbav:"display_name" firestore:"display_name"`
-	PasswordHash string `dynamodbav:"password_hash" firestore:"password_hash"`
-	CreatedAt    string `dynamodbav:"created_at" firestore:"created_at"`
+	Email         string `dynamodbav:"email" firestore:"email"`
+	Username      string `dynamodbav:"username" firestore:"username"`
+	Domain        string `dynamodbav:"domain" firestore:"domain"`
+	DisplayName   string `dynamodbav:"display_name" firestore:"display_name"`
+	PasswordHash  string `dynamodbav:"password_hash" firestore:"password_hash"`
+	Phone         string `dynamodbav:"phone" firestore:"phone"`
+	ExternalEmail string `dynamodbav:"external_email" firestore:"external_email"`
+	Status        string `dynamodbav:"status" firestore:"status"`
+	TwoFAEnabled  bool   `dynamodbav:"twofa_enabled" firestore:"twofa_enabled"`
+	TwoFASecret   string `dynamodbav:"twofa_secret" firestore:"twofa_secret"`
+	TwoFABackupCodes string `dynamodbav:"twofa_backup_codes" firestore:"twofa_backup_codes"`
+	LoginAttempts int    `dynamodbav:"login_attempts" firestore:"login_attempts"`
+	CreatedAt     string `dynamodbav:"created_at" firestore:"created_at"`
 }
 
 type docMessage struct {
@@ -261,7 +282,6 @@ type docMessage struct {
 	Subject     string `dynamodbav:"subject" firestore:"subject"`
 	ContentType string `dynamodbav:"content_type" firestore:"content_type"`
 	Body        string `dynamodbav:"body" firestore:"body"`
-	Attachments string `dynamodbav:"attachments" firestore:"attachments"` // JSON array of Attachment
 	GCSKey      string `dynamodbav:"gcs_key" firestore:"gcs_key"`
 	Folder      string `dynamodbav:"folder" firestore:"folder"`
 	Seen        bool   `dynamodbav:"seen" firestore:"seen"`
@@ -272,17 +292,24 @@ type docMessage struct {
 func (b *DbBase) docUserToModel(du *docUser) *model.User {
 	createdAt, _ := time.Parse(time.RFC3339, du.CreatedAt)
 	return &model.User{
-		Username:     du.Username,
-		Domain:       du.Domain,
-		DisplayName:  du.DisplayName,
-		PasswordHash: du.PasswordHash,
-		CreatedAt:    createdAt,
+		ID:               du.Email,
+		Username:         du.Username,
+		Domain:           du.Domain,
+		DisplayName:      du.DisplayName,
+		PasswordHash:     du.PasswordHash,
+		Phone:            du.Phone,
+		ExternalEmail:    du.ExternalEmail,
+		Status:           du.Status,
+		TwoFAEnabled:     du.TwoFAEnabled,
+		TwoFASecret:      du.TwoFASecret,
+		TwoFABackupCodes: du.TwoFABackupCodes,
+		LoginAttempts:    du.LoginAttempts,
+		CreatedAt:        createdAt,
 	}
 }
 
 func (b *DbBase) docMessageToModel(dm *docMessage) *model.Message {
 	receivedAt, _ := time.Parse(time.RFC3339, dm.ReceivedAt)
-	attachments := b.UnmarshalAttachments(dm.Attachments)
 	return &model.Message{
 		ID:          dm.ID,
 		MessageID:   dm.MessageID,
@@ -293,7 +320,6 @@ func (b *DbBase) docMessageToModel(dm *docMessage) *model.Message {
 		Subject:     dm.Subject,
 		ContentType: dm.ContentType,
 		Body:        dm.Body,
-		Attachments: attachments,
 		GCSKey:      dm.GCSKey,
 		OwnerUser:   dm.OwnerUser,
 		Folder:      dm.Folder,
@@ -313,21 +339,6 @@ func (b *DbBase) MarshalJSON(v any) string {
 		return "[]"
 	}
 	return string(data)
-}
-
-func (b *DbBase) MarshalAttachments(attachments []model.Attachment) string {
-	if attachments == nil {
-		attachments = []model.Attachment{}
-	}
-	return b.MarshalJSON(attachments)
-}
-
-func (b *DbBase) UnmarshalAttachments(s string) []model.Attachment {
-	var attachments []model.Attachment
-	if err := json.Unmarshal([]byte(s), &attachments); err != nil {
-		log.Printf("unmarshal attachments error: %v", err)
-	}
-	return attachments
 }
 
 func (b *DbBase) MarshalAddrs(addrs []string) string {
@@ -368,19 +379,11 @@ func (db *DbSQL) Close() error {
 	return db.Conn.Close()
 }
 
-func (db *DbSQL) Migrate(migrationQueries []string) error {
-	for _, q := range migrationQueries {
-		if _, err := db.Conn.Exec(q); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // User operations
 
 func (db *DbSQL) CreateUser(username, domain, displayName, passwordHash string) error {
-	_, err := db.Conn.Exec(db.Queries[QCreateUser], username, domain, displayName, passwordHash)
+	id := username + "@" + domain
+	_, err := db.Conn.Exec(db.Queries[QCreateUser], id, username, domain, displayName, passwordHash)
 	return err
 }
 
@@ -389,7 +392,8 @@ func (db *DbSQL) GetUser(username, domain string) (*model.User, error) {
 	var createdAt, lastLoginAttempt, twofaEnabled interface{}
 	err := db.Conn.QueryRow(db.Queries[QGetUser], username, domain).
 		Scan(&u.ID, &u.Username, &u.Domain, &u.DisplayName, &u.PasswordHash,
-			&u.Status, &twofaEnabled, &u.TwoFASecret, &u.TwoFABackupCodes,
+			&u.Phone, &u.ExternalEmail, &u.Status, &twofaEnabled,
+			&u.TwoFASecret, &u.TwoFABackupCodes,
 			&u.LoginAttempts, &lastLoginAttempt, &createdAt)
 	if err != nil {
 		return nil, err
@@ -418,7 +422,7 @@ func (db *DbSQL) SaveMessage(msg *model.Message) error {
 	_, err := db.Conn.Exec(db.Queries[QSaveMessage],
 		msg.ID, msg.MessageID, msg.From,
 		db.MarshalAddrs(msg.To), db.MarshalAddrs(msg.CC), db.MarshalAddrs(msg.BCC),
-		msg.Subject, msg.ContentType, msg.Body, db.MarshalAttachments(msg.Attachments),
+		msg.Subject, msg.ContentType, msg.Body,
 		msg.GCSKey, msg.OwnerUser, msg.Folder,
 		db.FormatBool(msg.Seen), db.FormatTime(msg.ReceivedAt),
 	)
@@ -445,11 +449,11 @@ func (db *DbSQL) ListAllMessages(ownerEmail string) ([]*model.Message, error) {
 
 func (db *DbSQL) GetMessage(id string) (*model.Message, error) {
 	m := &model.Message{}
-	var toJSON, ccJSON, bccJSON, attachJSON string
+	var toJSON, ccJSON, bccJSON string
 	var seen, deleted, receivedAt interface{}
 	err := db.Conn.QueryRow(db.Queries[QGetMessage], id).Scan(
 		&m.ID, &m.MessageID, &m.From, &toJSON, &ccJSON, &bccJSON,
-		&m.Subject, &m.ContentType, &m.Body, &attachJSON, &m.GCSKey, &m.OwnerUser,
+		&m.Subject, &m.ContentType, &m.Body, &m.GCSKey, &m.OwnerUser,
 		&m.Folder, &seen, &deleted, &receivedAt,
 	)
 	if err != nil {
@@ -458,7 +462,7 @@ func (db *DbSQL) GetMessage(id string) (*model.Message, error) {
 	m.To = db.UnmarshalAddrs(toJSON)
 	m.CC = db.UnmarshalAddrs(ccJSON)
 	m.BCC = db.UnmarshalAddrs(bccJSON)
-	m.Attachments = db.UnmarshalAttachments(attachJSON)
+	m.Attachments, _ = db.ListAttachments(id)
 	m.Seen = scanBool(seen)
 	m.Deleted = scanBool(deleted)
 	m.ReceivedAt = scanTime(receivedAt)
@@ -484,11 +488,11 @@ func (db *DbSQL) scanMessages(rows *sql.Rows) ([]*model.Message, error) {
 	var messages []*model.Message
 	for rows.Next() {
 		m := &model.Message{}
-		var toJSON, ccJSON, bccJSON, attachJSON string
+		var toJSON, ccJSON, bccJSON string
 		var seen, deleted, receivedAt interface{}
 		err := rows.Scan(
 			&m.ID, &m.MessageID, &m.From, &toJSON, &ccJSON, &bccJSON,
-			&m.Subject, &m.ContentType, &m.Body, &attachJSON, &m.GCSKey, &m.OwnerUser,
+			&m.Subject, &m.ContentType, &m.Body, &m.GCSKey, &m.OwnerUser,
 			&m.Folder, &seen, &deleted, &receivedAt,
 		)
 		if err != nil {
@@ -497,7 +501,7 @@ func (db *DbSQL) scanMessages(rows *sql.Rows) ([]*model.Message, error) {
 		m.To = db.UnmarshalAddrs(toJSON)
 		m.CC = db.UnmarshalAddrs(ccJSON)
 		m.BCC = db.UnmarshalAddrs(bccJSON)
-		m.Attachments = db.UnmarshalAttachments(attachJSON)
+		// Attachments loaded separately via ListAttachments() when needed (e.g. GetMessage)
 		m.Seen = scanBool(seen)
 		m.Deleted = scanBool(deleted)
 		m.ReceivedAt = scanTime(receivedAt)
@@ -586,7 +590,8 @@ func (db *DbSQL) scanUsers(rows *sql.Rows) ([]*model.User, error) {
 		u := &model.User{}
 		var createdAt, lastLoginAttempt, twofaEnabled interface{}
 		err := rows.Scan(&u.ID, &u.Username, &u.Domain, &u.DisplayName, &u.PasswordHash,
-			&u.Status, &twofaEnabled, &u.TwoFASecret, &u.TwoFABackupCodes,
+			&u.Phone, &u.ExternalEmail, &u.Status, &twofaEnabled,
+			&u.TwoFASecret, &u.TwoFABackupCodes,
 			&u.LoginAttempts, &lastLoginAttempt, &createdAt)
 		if err != nil {
 			return nil, err
@@ -903,6 +908,46 @@ func (db *DbSQL) UpdateContact(contact *model.Contact) error {
 
 func (db *DbSQL) DeleteContact(id string) error {
 	_, err := db.Conn.Exec(db.Queries[QDeleteContact], id)
+	return err
+}
+
+// --- Attachment operations ---
+
+func (db *DbSQL) SaveAttachment(att *model.Attachment) error {
+	_, err := db.Conn.Exec(db.Queries[QSaveAttachment],
+		att.ID, att.MailContentID, att.Filename, att.ContentType, att.Size, att.BucketKey)
+	return err
+}
+
+func (db *DbSQL) ListAttachments(mailContentID string) ([]model.Attachment, error) {
+	rows, err := db.Conn.Query(db.Queries[QListAttachments], mailContentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var atts []model.Attachment
+	for rows.Next() {
+		var a model.Attachment
+		if err := rows.Scan(&a.ID, &a.MailContentID, &a.Filename, &a.ContentType, &a.Size, &a.BucketKey); err != nil {
+			return nil, err
+		}
+		atts = append(atts, a)
+	}
+	return atts, nil
+}
+
+func (db *DbSQL) GetAttachment(id string) (*model.Attachment, error) {
+	a := &model.Attachment{}
+	err := db.Conn.QueryRow(db.Queries[QGetAttachment], id).Scan(
+		&a.ID, &a.MailContentID, &a.Filename, &a.ContentType, &a.Size, &a.BucketKey)
+	if err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
+func (db *DbSQL) DeleteAttachmentsByMessage(mailContentID string) error {
+	_, err := db.Conn.Exec(db.Queries[QDeleteAttachmentsByMsg], mailContentID)
 	return err
 }
 

@@ -294,7 +294,6 @@ func (db *DbFirestore) SaveMessage(msg *model.Message) error {
 		Subject:     msg.Subject,
 		ContentType: msg.ContentType,
 		Body:        msg.Body,
-		Attachments: db.MarshalAttachments(msg.Attachments),
 		GCSKey:      msg.GCSKey,
 		OwnerUser:   msg.OwnerUser,
 		Folder:      msg.Folder,
@@ -870,6 +869,19 @@ func (db *DbFirestore) DeleteContact(id string) error {
 	_, err := db.contacts().Doc(id).Delete(context.Background())
 	return err
 }
+
+// --- Attachment operations (stub for Firestore) ---
+
+func (db *DbFirestore) SaveAttachment(att *model.Attachment) error {
+	return fmt.Errorf("attachment store not yet implemented for Firestore")
+}
+func (db *DbFirestore) ListAttachments(mailContentID string) ([]model.Attachment, error) {
+	return nil, nil
+}
+func (db *DbFirestore) GetAttachment(id string) (*model.Attachment, error) {
+	return nil, fmt.Errorf("attachment not found")
+}
+func (db *DbFirestore) DeleteAttachmentsByMessage(mailContentID string) error { return nil }
 
 // --- Auth / 2FA operations (stub — full implementation needed for Firestore) ---
 

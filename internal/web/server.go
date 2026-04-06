@@ -23,7 +23,7 @@ type Server struct {
 	handlers     *Handlers
 	admin        *AdminHandlers
 	tmpl         *template.Template
-	certReloader *tlsutil.CertReloader
+	certStore *tlsutil.CertStore
 }
 
 type tmplRenderer struct {
@@ -54,7 +54,7 @@ func (t *tmplRenderer) render(w http.ResponseWriter, name string, data pageData)
 	}
 }
 
-func NewServer(cfg *config.Config, s *store.Store, relay *smtp.Relay, checker *security.Checker, certReloader *tlsutil.CertReloader) (*Server, error) {
+func NewServer(cfg *config.Config, s *store.Store, relay *smtp.Relay, checker *security.Checker, certStore *tlsutil.CertStore) (*Server, error) {
 	tmpl, err := loadTemplates("web/templates")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load templates: %w", err)
@@ -67,14 +67,14 @@ func NewServer(cfg *config.Config, s *store.Store, relay *smtp.Relay, checker *s
 	}
 	authService := authpkg.NewService(s.DB, issuer)
 	handlers := NewHandlers(s, relay, sessions, cfg, checker, authService)
-	adminHandlers := NewAdminHandlers(cfg, s, relay, certReloader)
+	adminHandlers := NewAdminHandlers(cfg, s, relay, certStore)
 
 	return &Server{
 		cfg:          cfg,
 		handlers:     handlers,
 		admin:        adminHandlers,
 		tmpl:         tmpl,
-		certReloader: certReloader,
+		certStore: certStore,
 	}, nil
 }
 
@@ -271,18 +271,15 @@ func (s *Server) Start() error {
 	addr := fmt.Sprintf(":%d", s.cfg.HTTPSPort)
 	log.Printf("Web server starting on %s", addr)
 
-	if s.certReloader != nil {
-		tlsCfg := s.certReloader.TLSConfig()
+	if s.certStore != nil && s.certStore.HasCerts() {
 		server := &http.Server{
 			Addr:      addr,
 			Handler:   handler,
-			TLSConfig: tlsCfg,
+			TLSConfig: s.certStore.TLSConfig(),
 		}
 		return server.ListenAndServeTLS("", "")
 	}
 
-	if s.cfg.TLSCert != "" && s.cfg.TLSKey != "" {
-		return http.ListenAndServeTLS(addr, s.cfg.TLSCert, s.cfg.TLSKey, handler)
-	}
+	log.Printf("No TLS certificates loaded, running HTTP only")
 	return http.ListenAndServe(addr, handler)
 }

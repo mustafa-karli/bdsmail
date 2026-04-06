@@ -34,181 +34,27 @@ func NewDbSqlite(path string) (*DbSQL, error) {
 			return t.UTC().Format(time.RFC3339)
 		},
 	}
-	if err := db.Migrate(sqliteMigrations()); err != nil {
-		return nil, err
-	}
 	return db, nil
-}
-
-func sqliteMigrations() []string {
-	return []string{
-		`CREATE TABLE IF NOT EXISTS user_account (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			username TEXT NOT NULL,
-			domain TEXT NOT NULL,
-			display_name TEXT NOT NULL DEFAULT '',
-			password_hash TEXT NOT NULL,
-			status TEXT NOT NULL DEFAULT 'A',
-			twofa_enabled INTEGER NOT NULL DEFAULT 0,
-			twofa_secret TEXT NOT NULL DEFAULT '',
-			twofa_backup_codes TEXT NOT NULL DEFAULT '',
-			login_attempts INTEGER NOT NULL DEFAULT 0,
-			last_login_attempt TEXT,
-			created_at TEXT DEFAULT (datetime('now')),
-			UNIQUE(username, domain)
-		)`,
-		`CREATE TABLE IF NOT EXISTS domain (
-			name TEXT PRIMARY KEY,
-			api_key_hash TEXT NOT NULL DEFAULT '',
-			ses_status TEXT NOT NULL DEFAULT '',
-			dkim_status TEXT NOT NULL DEFAULT '',
-			status TEXT NOT NULL DEFAULT 'active',
-			created_by TEXT NOT NULL DEFAULT '',
-			created_at TEXT DEFAULT (datetime('now'))
-		)`,
-		`CREATE TABLE IF NOT EXISTS mail_content (
-			id TEXT PRIMARY KEY,
-			message_id TEXT,
-			from_addr TEXT NOT NULL,
-			to_addrs TEXT NOT NULL,
-			cc_addrs TEXT NOT NULL,
-			bcc_addrs TEXT NOT NULL,
-			subject TEXT,
-			content_type TEXT,
-			body TEXT NOT NULL DEFAULT '',
-			attachments TEXT NOT NULL DEFAULT '[]',
-			gcs_key TEXT NOT NULL DEFAULT '',
-			owner_user TEXT NOT NULL,
-			folder TEXT NOT NULL DEFAULT 'INBOX',
-			seen INTEGER NOT NULL DEFAULT 0,
-			deleted INTEGER NOT NULL DEFAULT 0,
-			received_at TEXT DEFAULT (datetime('now'))
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_mail_content_owner_folder ON mail_content(owner_user, folder)`,
-		`CREATE TABLE IF NOT EXISTS mail_alias (
-			alias_email TEXT PRIMARY KEY,
-			target_emails TEXT NOT NULL,
-			is_catch_all INTEGER NOT NULL DEFAULT 0
-		)`,
-		`CREATE TABLE IF NOT EXISTS mailing_list (
-			list_address TEXT PRIMARY KEY,
-			name TEXT NOT NULL,
-			description TEXT NOT NULL DEFAULT '',
-			owner_email TEXT NOT NULL,
-			created_at TEXT DEFAULT (datetime('now'))
-		)`,
-		`CREATE TABLE IF NOT EXISTS list_member (
-			list_address TEXT NOT NULL,
-			member_email TEXT NOT NULL,
-			PRIMARY KEY (list_address, member_email)
-		)`,
-		`CREATE TABLE IF NOT EXISTS mail_filter (
-			id TEXT PRIMARY KEY,
-			user_email TEXT NOT NULL,
-			name TEXT NOT NULL,
-			priority INTEGER NOT NULL DEFAULT 0,
-			conditions TEXT NOT NULL DEFAULT '[]',
-			actions TEXT NOT NULL DEFAULT '[]',
-			enabled INTEGER NOT NULL DEFAULT 1
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_mail_filter_user ON mail_filter(user_email)`,
-		`CREATE TABLE IF NOT EXISTS auto_reply (
-			user_email TEXT PRIMARY KEY,
-			enabled INTEGER NOT NULL DEFAULT 0,
-			subject TEXT NOT NULL DEFAULT '',
-			body TEXT NOT NULL DEFAULT '',
-			start_date TEXT,
-			end_date TEXT
-		)`,
-		`CREATE TABLE IF NOT EXISTS auto_reply_log (
-			user_email TEXT NOT NULL,
-			sender_email TEXT NOT NULL,
-			sent_at TEXT DEFAULT (datetime('now')),
-			PRIMARY KEY (user_email, sender_email)
-		)`,
-		`CREATE TABLE IF NOT EXISTS user_contact (
-			id TEXT PRIMARY KEY,
-			owner_email TEXT NOT NULL,
-			vcard_data TEXT NOT NULL,
-			etag TEXT NOT NULL,
-			created_at TEXT DEFAULT (datetime('now')),
-			updated_at TEXT DEFAULT (datetime('now'))
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_user_contact_owner ON user_contact(owner_email)`,
-		`CREATE TABLE IF NOT EXISTS oauth_client (
-			id TEXT PRIMARY KEY,
-			name TEXT NOT NULL,
-			client_id TEXT UNIQUE NOT NULL,
-			secret_hash TEXT NOT NULL,
-			redirect_uri TEXT NOT NULL,
-			domain TEXT NOT NULL,
-			created_by TEXT NOT NULL DEFAULT '',
-			created_at TEXT DEFAULT (datetime('now'))
-		)`,
-		`CREATE TABLE IF NOT EXISTS oauth_code (
-			code TEXT PRIMARY KEY,
-			client_id TEXT NOT NULL,
-			user_email TEXT NOT NULL,
-			redirect_uri TEXT NOT NULL,
-			scope TEXT NOT NULL DEFAULT '',
-			nonce TEXT NOT NULL DEFAULT '',
-			expires_at TEXT NOT NULL,
-			used INTEGER NOT NULL DEFAULT 0
-		)`,
-		`CREATE TABLE IF NOT EXISTS oauth_token (
-			token TEXT PRIMARY KEY,
-			client_id TEXT NOT NULL,
-			user_email TEXT NOT NULL,
-			scope TEXT NOT NULL DEFAULT '',
-			expires_at TEXT NOT NULL
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_oauth_client_domain ON oauth_client(domain)`,
-		`CREATE TABLE IF NOT EXISTS user_trusted_device (
-			id TEXT PRIMARY KEY,
-			user_email TEXT NOT NULL,
-			device_fingerprint TEXT NOT NULL,
-			device_name TEXT NOT NULL DEFAULT '',
-			trusted_at TEXT DEFAULT (datetime('now')),
-			expires_at TEXT NOT NULL,
-			last_seen_at TEXT
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_trusted_device_user ON user_trusted_device(user_email)`,
-		`CREATE TABLE IF NOT EXISTS user_otp (
-			id TEXT PRIMARY KEY,
-			user_email TEXT NOT NULL,
-			code TEXT NOT NULL,
-			purpose TEXT NOT NULL DEFAULT 'login',
-			expires_at TEXT NOT NULL,
-			attempts INTEGER NOT NULL DEFAULT 0
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_otp_user ON user_otp(user_email)`,
-		`CREATE TABLE IF NOT EXISTS login_token (
-			token TEXT PRIMARY KEY,
-			user_email TEXT NOT NULL,
-			created_at TEXT DEFAULT (datetime('now')),
-			expires_at TEXT NOT NULL
-		)`,
-	}
 }
 
 func sqliteQueries() map[string]string {
 	return map[string]string{
-		QCreateUser:  `INSERT INTO user_account (username, domain, display_name, password_hash) VALUES (?, ?, ?, ?)`,
-		QGetUser:     `SELECT id, username, domain, display_name, password_hash, status, twofa_enabled, twofa_secret, twofa_backup_codes, login_attempts, last_login_attempt, created_at FROM user_account WHERE username = ? AND domain = ?`,
+		QCreateUser:  `INSERT INTO user_account (id, username, domain, display_name, password_hash) VALUES (?, ?, ?, ?, ?)`,
+		QGetUser:     `SELECT id, username, domain, display_name, password_hash, phone, external_email, status, twofa_enabled, twofa_secret, twofa_backup_codes, login_attempts, last_login_attempt, created_at FROM user_account WHERE username = ? AND domain = ?`,
 		QUserExists:  `SELECT COUNT(*) FROM user_account WHERE username = ? AND domain = ?`,
-		QSaveMessage: `INSERT INTO mail_content (id, message_id, from_addr, to_addrs, cc_addrs, bcc_addrs, subject, content_type, body, attachments, gcs_key, owner_user, folder, seen, received_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		QListMessages: `SELECT id, message_id, from_addr, to_addrs, cc_addrs, bcc_addrs, subject, content_type, body, attachments, gcs_key, owner_user, folder, seen, deleted, received_at
+		QSaveMessage: `INSERT INTO mail_content (id, message_id, from_addr, to_addrs, cc_addrs, bcc_addrs, subject, content_type, body, gcs_key, owner_user, folder, seen, received_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		QListMessages: `SELECT id, message_id, from_addr, to_addrs, cc_addrs, bcc_addrs, subject, content_type, body, gcs_key, owner_user, folder, seen, deleted, received_at
 			FROM mail_content WHERE owner_user = ? AND folder = ? AND deleted = 0 ORDER BY received_at DESC`,
-		QListAllMessages: `SELECT id, message_id, from_addr, to_addrs, cc_addrs, bcc_addrs, subject, content_type, body, attachments, gcs_key, owner_user, folder, seen, deleted, received_at
+		QListAllMessages: `SELECT id, message_id, from_addr, to_addrs, cc_addrs, bcc_addrs, subject, content_type, body, gcs_key, owner_user, folder, seen, deleted, received_at
 			FROM mail_content WHERE owner_user = ? AND deleted = 0 ORDER BY received_at DESC`,
-		QGetMessage: `SELECT id, message_id, from_addr, to_addrs, cc_addrs, bcc_addrs, subject, content_type, body, attachments, gcs_key, owner_user, folder, seen, deleted, received_at
+		QGetMessage: `SELECT id, message_id, from_addr, to_addrs, cc_addrs, bcc_addrs, subject, content_type, body, gcs_key, owner_user, folder, seen, deleted, received_at
 			FROM mail_content WHERE id = ?`,
 		QMarkSeen:      `UPDATE mail_content SET seen = 1 WHERE id = ?`,
 		QMarkDeleted:   `UPDATE mail_content SET deleted = 1 WHERE id = ?`,
 		QDeleteMessage: `DELETE FROM mail_content WHERE id = ?`,
 
-		QListUsers:          `SELECT id, username, domain, display_name, password_hash, status, twofa_enabled, twofa_secret, twofa_backup_codes, login_attempts, last_login_attempt, created_at FROM user_account ORDER BY domain, username`,
-		QListUsersByDomain:  `SELECT id, username, domain, display_name, password_hash, status, twofa_enabled, twofa_secret, twofa_backup_codes, login_attempts, last_login_attempt, created_at FROM user_account WHERE domain = ? ORDER BY username`,
+		QListUsers:          `SELECT id, username, domain, display_name, password_hash, phone, external_email, status, twofa_enabled, twofa_secret, twofa_backup_codes, login_attempts, last_login_attempt, created_at FROM user_account ORDER BY domain, username`,
+		QListUsersByDomain:  `SELECT id, username, domain, display_name, password_hash, phone, external_email, status, twofa_enabled, twofa_secret, twofa_backup_codes, login_attempts, last_login_attempt, created_at FROM user_account WHERE domain = ? ORDER BY username`,
 		QUpdateUser:         `UPDATE user_account SET display_name = ?, password_hash = ? WHERE username = ? AND domain = ?`,
 		QDeleteUser:         `DELETE FROM user_account WHERE username = ? AND domain = ?`,
 		QDeleteUserMessages: `DELETE FROM mail_content WHERE owner_user = ?`,
@@ -245,7 +91,7 @@ func sqliteQueries() map[string]string {
 
 		QCountUnread: `SELECT COUNT(*) FROM mail_content WHERE owner_user = ? AND folder = ? AND seen = 0 AND deleted = 0`,
 
-		QSearchMessages: `SELECT id, message_id, from_addr, to_addrs, cc_addrs, bcc_addrs, subject, content_type, body, attachments, gcs_key, owner_user, folder, seen, deleted, received_at
+		QSearchMessages: `SELECT id, message_id, from_addr, to_addrs, cc_addrs, bcc_addrs, subject, content_type, body, gcs_key, owner_user, folder, seen, deleted, received_at
 			FROM mail_content WHERE owner_user = ? AND deleted = 0 AND (subject LIKE ? OR body LIKE ? OR from_addr LIKE ? OR to_addrs LIKE ?) ORDER BY received_at DESC LIMIT 100`,
 
 		QCreateContact: `INSERT INTO user_contact (id, owner_email, vcard_data, etag) VALUES (?, ?, ?, ?)`,
@@ -253,6 +99,12 @@ func sqliteQueries() map[string]string {
 		QListContacts:  `SELECT id, owner_email, vcard_data, etag, created_at, updated_at FROM user_contact WHERE owner_email = ? ORDER BY updated_at DESC`,
 		QUpdateContact: `UPDATE user_contact SET vcard_data = ?, etag = ?, updated_at = datetime('now') WHERE id = ?`,
 		QDeleteContact: `DELETE FROM user_contact WHERE id = ?`,
+
+		// Attachments
+		QSaveAttachment:        `INSERT INTO mail_attachment (id, mail_content_id, filename, content_type, size, bucket_key) VALUES (?, ?, ?, ?, ?, ?)`,
+		QListAttachments:       `SELECT id, mail_content_id, filename, content_type, size, bucket_key FROM mail_attachment WHERE mail_content_id = ?`,
+		QGetAttachment:         `SELECT id, mail_content_id, filename, content_type, size, bucket_key FROM mail_attachment WHERE id = ?`,
+		QDeleteAttachmentsByMsg: `DELETE FROM mail_attachment WHERE mail_content_id = ?`,
 
 		// Auth / 2FA
 		QEnable2FA:    `UPDATE user_account SET twofa_enabled = 1, twofa_secret = ?, twofa_backup_codes = ? WHERE username || '@' || domain = ?`,

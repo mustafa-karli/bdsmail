@@ -28,6 +28,7 @@ var (
 	FlagS3Bucket    = flag.String("s3_bucket", "", "S3 bucket name")
 	FlagDKIMKeyDir  = flag.String("dkim_key_dir", "/opt/bdsmail/dkim", "DKIM private keys directory")
 	FlagDKIMSelector = flag.String("dkim_selector", "default", "DKIM selector name")
+	FlagSSLDir      = flag.String("ssl_dir", "/opt/bdsmail/ssl", "Per-domain SSL certificate directory")
 	FlagAcmeWebroot = flag.String("acme_webroot", "/opt/bdsmail/acme", "ACME challenge webroot")
 	FlagAmplifyURL  = flag.String("amplify_url", "", "Amplify app URL for webmail CNAME")
 	FlagMaxAttachmentBytes = flag.Int64("max_attachment_bytes", 10*1024*1024, "Maximum attachment size in bytes")
@@ -41,8 +42,7 @@ type Config struct {
 	IMAPPort     int
 	HTTPSPort    int
 	HTTPPort     int
-	TLSCert      string
-	TLSKey       string
+	SSLDir       string
 	GCSBucket    string
 	DatabaseURL  string // loaded from secrets
 	DKIMKeyDir   string
@@ -85,8 +85,7 @@ func Load() *Config {
 		IMAPPort:     *FlagIMAPPort,
 		HTTPSPort:    *FlagHTTPSPort,
 		HTTPPort:     *FlagHTTPPort,
-		TLSCert:      *common.TLSCert,
-		TLSKey:       *common.TLSKey,
+		SSLDir:       *FlagSSLDir,
 		GCSBucket:    *FlagGCSBucket,
 		DKIMKeyDir:   *FlagDKIMKeyDir,
 		DKIMSelector: *FlagDKIMSelector,

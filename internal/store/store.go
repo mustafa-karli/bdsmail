@@ -22,7 +22,7 @@ func NewStore(db Database, bucket ObjectStore) *Store {
 }
 
 // newMessage creates a Message with common fields populated.
-func newMessage(from string, to, cc, bcc []string, subject, contentType, body, ownerUser, folder string, seen bool, attachments []model.Attachment) *model.Message {
+func newMessage(from string, to, cc, bcc []string, subject, contentType, body, ownerUser, folder string, seen bool) *model.Message {
 	_, senderDomain := SplitEmail(from)
 	id := uuid.New().String()
 	return &model.Message{
@@ -35,7 +35,6 @@ func newMessage(from string, to, cc, bcc []string, subject, contentType, body, o
 		Subject:     subject,
 		ContentType: contentType,
 		Body:        body,
-		Attachments: attachments,
 		OwnerUser:   ownerUser,
 		Folder:      folder,
 		Seen:        seen,
@@ -43,17 +42,27 @@ func newMessage(from string, to, cc, bcc []string, subject, contentType, body, o
 	}
 }
 
-// saveAndDeliver creates a message, saves attachments, and persists it.
+// saveAndDeliver creates a message, saves attachments to bucket + DB, and persists the message.
 func (s *Store) saveAndDeliver(ctx context.Context, from string, to, cc, bcc []string, subject, contentType, body, ownerUser, folder string, seen bool, parsedAttachments []mimeutil.ParsedAttachment) (string, error) {
-	msg := newMessage(from, to, cc, bcc, subject, contentType, body, ownerUser, folder, seen, nil)
+	msg := newMessage(from, to, cc, bcc, subject, contentType, body, ownerUser, folder, seen)
+
+	// Save message first
+	if err := s.DB.SaveMessage(msg); err != nil {
+		return "", fmt.Errorf("save message for %s: %w", ownerUser, err)
+	}
+
+	// Save attachments to bucket + mail_attachment table
 	attachments, err := s.saveAttachments(ctx, msg.ID, parsedAttachments)
 	if err != nil {
 		log.Printf("warning: failed to save attachments for %s: %v", msg.ID, err)
 	}
-	msg.Attachments = attachments
-	if err := s.DB.SaveMessage(msg); err != nil {
-		return "", fmt.Errorf("save message for %s: %w", ownerUser, err)
+	for _, att := range attachments {
+		att.MailContentID = msg.ID
+		if err := s.DB.SaveAttachment(&att); err != nil {
+			log.Printf("warning: failed to save attachment metadata %s: %v", att.ID, err)
+		}
 	}
+
 	return msg.MessageID, nil
 }
 
@@ -172,18 +181,18 @@ func (s *Store) LoadAttachments(ctx context.Context, msg *model.Message) ([]mime
 }
 
 func (s *Store) DeleteMessageFull(ctx context.Context, id string) error {
-	msg, err := s.DB.GetMessage(id)
-	if err != nil {
-		return err
-	}
 	// Delete attachments from bucket
+	attachments, _ := s.DB.ListAttachments(id)
 	if s.Bucket != nil {
-		for _, att := range msg.Attachments {
+		for _, att := range attachments {
 			if err := s.Bucket.Delete(ctx, att.BucketKey); err != nil {
 				log.Printf("warning: failed to delete attachment %s: %v", att.BucketKey, err)
 			}
 		}
 	}
+	// Delete attachment metadata from DB
+	s.DB.DeleteAttachmentsByMessage(id)
+	// Delete the message
 	return s.DB.DeleteMessage(id)
 }
 
