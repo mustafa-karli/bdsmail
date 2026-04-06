@@ -1205,3 +1205,36 @@ func (db *DbDynamo) unmarshalContact(item map[string]types.AttributeValue) (*mod
 	}
 	return c, nil
 }
+
+// --- OAuth operations (not yet implemented for DynamoDB) ---
+
+func (db *DbDynamo) CreateOAuthClient(client *model.OAuthClient) error {
+	return fmt.Errorf("OAuth not supported on DynamoDB backend")
+}
+func (db *DbDynamo) GetOAuthClient(clientID string) (*model.OAuthClient, error) {
+	return nil, fmt.Errorf("OAuth not supported on DynamoDB backend")
+}
+func (db *DbDynamo) ListOAuthClients(ownerEmail string) ([]*model.OAuthClient, error) {
+	return nil, fmt.Errorf("OAuth not supported on DynamoDB backend")
+}
+func (db *DbDynamo) DeleteOAuthClient(id string) error {
+	return fmt.Errorf("OAuth not supported on DynamoDB backend")
+}
+func (db *DbDynamo) CreateOAuthCode(code *model.OAuthCode) error {
+	return fmt.Errorf("OAuth not supported on DynamoDB backend")
+}
+func (db *DbDynamo) GetOAuthCode(code string) (*model.OAuthCode, error) {
+	return nil, fmt.Errorf("OAuth not supported on DynamoDB backend")
+}
+func (db *DbDynamo) MarkOAuthCodeUsed(code string) error {
+	return fmt.Errorf("OAuth not supported on DynamoDB backend")
+}
+func (db *DbDynamo) CreateOAuthToken(token *model.OAuthToken) error {
+	return fmt.Errorf("OAuth not supported on DynamoDB backend")
+}
+func (db *DbDynamo) GetOAuthToken(token string) (*model.OAuthToken, error) {
+	return nil, fmt.Errorf("OAuth not supported on DynamoDB backend")
+}
+func (db *DbDynamo) DeleteOAuthToken(token string) error {
+	return fmt.Errorf("OAuth not supported on DynamoDB backend")
+}

@@ -1,114 +1,127 @@
-# Deployment Options & Cost Analysis
+# Options & Alternatives
 
-Cost estimates for running bdsmail with ~10,000 emails/month, light usage.
+Design decisions, alternatives considered, and current implementation choices for bdsmail.
 
-## Compute Options
+## Deployment Options
 
-| Option | Specs | Monthly Cost | Notes |
-|--------|-------|-------------|-------|
-| GCP e2-micro | Shared, 1GB RAM | ~$6.50 | Current setup |
-| AWS EC2 t4g.micro | 2 vCPU, 1GB ARM | ~$6.13 | Similar to GCP |
-| AWS Lightsail | 1 vCPU, 1GB, static IP included | $5.00 | Simplest AWS option |
+See [DEPLOYMENT.md](DEPLOYMENT.md) for full step-by-step instructions.
 
-## Database Options
+| Option | Stack | Monthly Cost |
+|--------|-------|-------------|
+| **AWS Lightsail + DynamoDB + SES** | Lightsail $5, DynamoDB free, S3, SES | **~$6** |
+| **GCP + Firestore + SES** | e2-micro, Firestore free, GCS, SES | **~$10.50** |
+| **GCP + Cloud SQL** | e2-micro, PostgreSQL, GCS, SES | **~$20.50** |
+| **AWS EC2 + RDS** | t4g.micro, PostgreSQL, S3, SES | **~$22.30** |
+| **Any VPS + SQLite** | Any $5 VPS, SQLite on disk | **~$6** |
 
-| Option | Monthly Cost | Pros | Cons |
-|--------|-------------|------|------|
-| GCP Cloud SQL (PostgreSQL) | ~$10.00 | Full SQL, managed backups | Most expensive for small workloads |
-| AWS RDS (PostgreSQL) | ~$11.50 | Full SQL, managed backups | Similar cost to Cloud SQL |
-| SQLite (on VM disk) | $0 | Zero config, no network dependency | Single-server only, no managed backups |
-| AWS DynamoDB | $0 (always-free tier) | Managed, scalable, 25GB free | AWS only, NoSQL (different query model) |
-| GCP Firestore | $0 (free tier) | Managed, real-time sync, 1GB free | GCP only, NoSQL, free tier has daily limits |
+## Database Backends
 
-## Object Storage Options (for Attachments)
+| Backend | Cost | Pros | Cons |
+|---------|------|------|------|
+| PostgreSQL | $10-15/mo (managed) | Full SQL, robust, best query flexibility | Requires managed DB or self-hosted |
+| SQLite | $0 | Zero config, no network dependency | Single-server only |
+| DynamoDB | $0 (always-free tier) | Managed, scalable, 25GB free | AWS only, OAuth not yet supported |
+| Firestore | $0 (free tier) | Managed, 1GB free | GCP only, OAuth not yet supported |
 
-Mail bodies are stored in the database. Object storage is used for file attachments only.
+## Object Storage
 
-| Option | Monthly Cost (< 1GB) | Config | Notes |
-|--------|---------------------|--------|-------|
-| GCP Cloud Storage | ~$0.02 | `BDS_BUCKET_TYPE=gcs` | Native to GCP |
-| AWS S3 | ~$0.02 | `BDS_BUCKET_TYPE=s3` | Native to AWS |
-| None (disabled) | $0 | `BDS_BUCKET_TYPE=` | No attachment support; inbound attachments dropped |
+| Backend | Cost | Config |
+|---------|------|--------|
+| GCS | ~$0.02/mo | `BDS_BUCKET_TYPE=gcs` |
+| S3 | ~$0.02/mo | `BDS_BUCKET_TYPE=s3` |
+| None | $0 | Attachments dropped |
 
-## Email Relay Options (Outbound)
+## Outbound Relay
 
-GCP blocks outbound port 25. A relay service is required to send email to external recipients.
+| Service | Cost (10K emails/mo) | Notes |
+|---------|---------------------|-------|
+| Amazon SES | ~$1.00 | Cheapest. $0.10/1K emails |
+| Mailgun | $15.00 | Basic plan |
+| SendGrid | $19.95 | Essentials plan |
 
-| Service | Cost for 10K emails/mo | Free Tier | Notes |
-|---------|----------------------|-----------|-------|
-| Amazon SES | $1.00 | 3K/mo for 12 months | Cheapest. $0.10 per 1K emails. |
-| Mailgun | $15.00 | None at this volume | Basic plan, 10K included |
-| SendGrid | $19.95 | 100/day forever | Essentials plan, 50K included |
+---
 
-## Full Stack Comparisons
+## Frontend Options
 
-### Option 1: Current GCP Setup
-| Component | Service | Cost |
-|-----------|---------|------|
-| Compute | GCP e2-micro | $6.50 |
-| Database | Cloud SQL PostgreSQL | $10.00 |
-| Storage | Cloud Storage | $0.02 |
-| Static IP | External IP | $3.00 |
-| Relay | Amazon SES | $1.00 |
-| **Total** | | **~$20.50/mo** |
+### Framework Comparison
 
-### Option 2: GCP Minimal (SQLite + body in DB)
-| Component | Service | Cost |
-|-----------|---------|------|
-| Compute | GCP e2-micro | $6.50 |
-| Database | SQLite (on disk) | $0 |
-| Storage | Body in DB | $0 |
-| Static IP | External IP | $3.00 |
-| Relay | Amazon SES | $1.00 |
-| **Total** | | **~$10.50/mo** |
+| | **Go Templates (current)** | **Angular** | **React** | **Vue (current)** |
+|---|---|---|---|---|
+| **Stack** | Server-rendered HTML, single CSS | TypeScript, RxJS | JSX, hooks | SFC (.vue), TypeScript |
+| **Build tooling** | None | Angular CLI, Webpack | Vite, Babel | Vite |
+| **Bundle size** | 0 KB | ~150-300 KB | ~40-80 KB | ~49 KB gzip |
+| **Learning curve** | Low | Steep | Medium | Low-Medium |
+| **Files to maintain** | 13 HTML + 1 CSS | 50-100+ | 30-60+ | 13 views + 5 components |
+| **Dependencies** | 0 | ~800+ (node_modules) | ~300+ | ~90 (node_modules) |
 
-### Option 3: GCP with Firestore
-| Component | Service | Cost |
-|-----------|---------|------|
-| Compute | GCP e2-micro | $6.50 |
-| Database | Firestore (free tier) | $0 |
-| Storage | Body in DB | $0 |
-| Static IP | External IP | $3.00 |
-| Relay | Amazon SES | $1.00 |
-| **Total** | | **~$10.50/mo** |
+### What's Implemented
 
-### Option 4: AWS Lightsail (cheapest overall)
-| Component | Service | Cost |
-|-----------|---------|------|
-| Compute + IP | Lightsail $5 plan | $5.00 |
-| Database | SQLite or DynamoDB | $0 |
-| Storage | Body in DB | $0 |
-| Relay | Amazon SES | $1.00 |
-| **Total** | | **~$6.00/mo** |
+**Both interfaces are available simultaneously:**
 
-### Option 5: AWS EC2 + DynamoDB
-| Component | Service | Cost |
-|-----------|---------|------|
-| Compute | EC2 t4g.micro | $6.13 |
-| Database | DynamoDB (free tier) | $0 |
-| Storage | Body in DB | $0 |
-| Static IP | Elastic IP | $3.65 |
-| Relay | Amazon SES | $1.00 |
-| **Total** | | **~$10.80/mo** |
+**Go Templates** at `/` — Server-rendered, zero JS dependencies. 13 HTML templates + 1 CSS file. Includes reply/forward, pagination, unread badges, keyboard shortcuts, mobile responsive, developer portal, consent screen.
 
-### Option 6: GCP Cloud Run (not recommended)
-| Component | Service | Cost |
-|-----------|---------|------|
-| Compute | Cloud Run (always-on) | $45.00 |
-| Database | Cloud SQL or Firestore | $0-10 |
-| Storage | Body in DB | $0 |
-| Relay | Amazon SES | $1.00 |
-| **Total** | | **~$46-56/mo** |
+**Vue 3 SPA** at `/app/` — Client-side app in `web/vue/`. 13 views, 5 reusable components, Pinia stores, Vue Router with auth guards. Calls JSON REST API at `/api/*`. ~49 KB gzip total.
 
-> Cloud Run is not a good fit for a mail server. It's designed for HTTP workloads, not persistent TCP servers (SMTP/IMAP/POP3). Always-on instances are required, making it 5-8x more expensive than a VM.
+| Component | Go Templates | Vue SPA |
+|-----------|-------------|---------|
+| Auth | Cookie/session | Same cookies via API |
+| Data | Server injects into template | Axios → `/api/*` → JSON |
+| Routing | Server-side | Vue Router (client-side) |
+| State | Page reload = fresh | Pinia stores (reactive) |
+| Build | None | `npm run build` |
+| Deploy | Embedded | Embedded at `/app/` or Amplify/Firebase/S3 |
 
-## Supported Database Backends
+### SPA Hosting Options
 
-Set `BDS_DB_TYPE` in `.env`:
+The Vue SPA can be served from the Go binary (default) or hosted separately:
 
-| Value | Backend | Config Required |
-|-------|---------|----------------|
-| `postgres` | PostgreSQL (default) | `DATABASE_URL` |
-| `sqlite` | SQLite file | `BDS_SQLITE_PATH` |
-| `dynamodb` | AWS DynamoDB | `BDS_DYNAMODB_REGION` |
-| `firestore` | GCP Firestore | `BDS_FIRESTORE_PROJECT` |
+| Option | Cost | Notes |
+|--------|------|-------|
+| Embedded in Go binary | $0 | Default — `npm run build` → served at `/app/` |
+| AWS Amplify | $0 | Free tier: 15GB/month |
+| Firebase Hosting | $0 | Free tier: 10GB/month |
+| S3 + CloudFront | ~$0.50 | CDN-level performance |
+
+---
+
+## Identity Provider (OAuth 2.0 / OIDC)
+
+bdsmail includes a built-in OAuth 2.0 / OpenID Connect identity provider — "Sign in with yourdomain.com."
+
+### What's Implemented
+
+- **Developer Portal** (`/developer`) — Self-service OAuth app registration
+- **Authorization Endpoint** (`/oauth/authorize`) — Consent screen with user authentication
+- **Token Endpoint** (`/oauth/token`) — Authorization code → access_token + JWT id_token
+- **UserInfo Endpoint** (`/oauth/userinfo`) — Bearer token → user profile
+- **JWKS** (`/oauth/jwks`) — RSA public keys for JWT verification
+- **OIDC Discovery** (`/.well-known/openid-configuration`) — Standard discovery document
+
+### Database Tables
+
+| Table | Purpose |
+|-------|---------|
+| `oauth_clients` | Registered apps (client_id, secret_hash, redirect_uri, owner) |
+| `oauth_codes` | Authorization codes (10 min expiry, single-use) |
+| `oauth_tokens` | Access tokens (1 hour expiry) |
+
+### JWT ID Token Claims
+
+```json
+{
+  "iss": "https://mail.yourdomain.com",
+  "sub": "alice@yourdomain.com",
+  "aud": "client_id",
+  "email": "alice@yourdomain.com",
+  "name": "alice",
+  "domain": "yourdomain.com",
+  "exp": 1234567890,
+  "iat": 1234567890,
+  "nonce": "..."
+}
+```
+
+### Supported on
+
+- PostgreSQL and SQLite backends (full support)
+- DynamoDB and Firestore (not yet implemented — returns error)

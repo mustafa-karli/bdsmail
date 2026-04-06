@@ -117,6 +117,33 @@ func sqliteMigrations() []string {
 			updated_at TEXT DEFAULT (datetime('now'))
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_contacts_owner ON contacts(owner_email)`,
+		`CREATE TABLE IF NOT EXISTS oauth_clients (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			client_id TEXT UNIQUE NOT NULL,
+			secret_hash TEXT NOT NULL,
+			redirect_uri TEXT NOT NULL,
+			owner_email TEXT NOT NULL,
+			created_at TEXT DEFAULT (datetime('now'))
+		)`,
+		`CREATE TABLE IF NOT EXISTS oauth_codes (
+			code TEXT PRIMARY KEY,
+			client_id TEXT NOT NULL,
+			user_email TEXT NOT NULL,
+			redirect_uri TEXT NOT NULL,
+			scope TEXT NOT NULL DEFAULT '',
+			nonce TEXT NOT NULL DEFAULT '',
+			expires_at TEXT NOT NULL,
+			used INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE TABLE IF NOT EXISTS oauth_tokens (
+			token TEXT PRIMARY KEY,
+			client_id TEXT NOT NULL,
+			user_email TEXT NOT NULL,
+			scope TEXT NOT NULL DEFAULT '',
+			expires_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_oauth_clients_owner ON oauth_clients(owner_email)`,
 	}
 }
 
@@ -190,5 +217,19 @@ func sqliteQueries() map[string]string {
 		QListContacts:  "SELECT id, owner_email, vcard_data, etag, created_at, updated_at FROM contacts WHERE owner_email = ? ORDER BY updated_at DESC",
 		QUpdateContact: "UPDATE contacts SET vcard_data = ?, etag = ?, updated_at = datetime('now') WHERE id = ?",
 		QDeleteContact: "DELETE FROM contacts WHERE id = ?",
+
+		// OAuth
+		QCreateOAuthClient: "INSERT INTO oauth_clients (id, name, client_id, secret_hash, redirect_uri, owner_email) VALUES (?, ?, ?, ?, ?, ?)",
+		QGetOAuthClient:    "SELECT id, name, client_id, secret_hash, redirect_uri, owner_email, created_at FROM oauth_clients WHERE client_id = ?",
+		QListOAuthClients:  "SELECT id, name, client_id, secret_hash, redirect_uri, owner_email, created_at FROM oauth_clients WHERE owner_email = ? ORDER BY created_at DESC",
+		QDeleteOAuthClient: "DELETE FROM oauth_clients WHERE id = ?",
+		QCreateOAuthCode:   "INSERT INTO oauth_codes (code, client_id, user_email, redirect_uri, scope, nonce, expires_at, used) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		QGetOAuthCode:      "SELECT code, client_id, user_email, redirect_uri, scope, nonce, expires_at, used FROM oauth_codes WHERE code = ?",
+		QMarkOAuthCodeUsed: "UPDATE oauth_codes SET used = 1 WHERE code = ?",
+		QCreateOAuthToken:  "INSERT INTO oauth_tokens (token, client_id, user_email, scope, expires_at) VALUES (?, ?, ?, ?, ?)",
+		QGetOAuthToken:     "SELECT token, client_id, user_email, scope, expires_at FROM oauth_tokens WHERE token = ?",
+		QDeleteOAuthToken:  "DELETE FROM oauth_tokens WHERE token = ?",
+		QDeleteExpiredOAuthCodes:  "DELETE FROM oauth_codes WHERE expires_at < datetime('now')",
+		QDeleteExpiredOAuthTokens: "DELETE FROM oauth_tokens WHERE expires_at < datetime('now')",
 	}
 }

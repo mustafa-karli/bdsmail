@@ -1,0 +1,62 @@
+{{define "title-developer"}}Developer Portal{{end}}
+{{define "content-developer"}}
+<div class="card">
+    <div class="toolbar">
+        <h2>Developer Portal</h2>
+        <a href="/inbox" class="btn btn-sm btn-secondary">Back to Inbox</a>
+    </div>
+    <p style="color:#666;margin-bottom:16px;">Register applications to enable "Sign in with {{.Domain}}" for your users.</p>
+
+    {{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+    {{if .Success}}<div class="alert alert-success">{{.Success}}</div>{{end}}
+
+    {{if .NewClient}}
+    <div class="alert alert-success" style="background:#fff3cd;color:#856404;border-color:#ffeeba;">
+        <strong>Save these credentials now — the secret won't be shown again.</strong><br><br>
+        <strong>Client ID:</strong> <code>{{.NewClient.ClientID}}</code><br>
+        <strong>Client Secret:</strong> <code>{{.NewClient.ClientSecret}}</code>
+    </div>
+    {{end}}
+
+    <form method="POST" action="/developer" style="margin-top:16px;">
+        <input type="hidden" name="action" value="create">
+        <h3 style="color:#1976D2;margin-bottom:12px;">Register Application</h3>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;">
+            <div style="flex:1;"><label>App Name</label><input type="text" name="name" placeholder="My App" required></div>
+            <div style="flex:2;"><label>Redirect URI</label><input type="text" name="redirect_uri" placeholder="https://myapp.com/callback" required></div>
+            <button type="submit" class="btn" style="height:42px;">Register</button>
+        </div>
+    </form>
+
+    <h3 style="color:#1976D2;margin-top:24px;margin-bottom:12px;">Your Applications</h3>
+    <table class="message-list">
+        <thead><tr><th>Name</th><th>Client ID</th><th>Redirect URI</th><th>Actions</th></tr></thead>
+        <tbody>
+            {{range .OAuthClients}}
+            <tr>
+                <td>{{.Name}}</td>
+                <td><code style="font-size:0.8em;">{{.ClientID}}</code></td>
+                <td style="font-size:0.85em;">{{.RedirectURI}}</td>
+                <td>
+                    <form method="POST" action="/developer" style="display:inline;">
+                        <input type="hidden" name="action" value="delete">
+                        <input type="hidden" name="client_db_id" value="{{.ID}}">
+                        <button type="submit" class="btn btn-sm btn-secondary">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+
+    <h3 style="color:#1976D2;margin-top:24px;margin-bottom:12px;">Integration Guide</h3>
+    <div style="background:#f5f5f5;padding:16px;border-radius:4px;font-size:0.9em;">
+        <p><strong>Authorization URL:</strong> <code>https://{{.Domain}}/oauth/authorize</code></p>
+        <p><strong>Token URL:</strong> <code>https://{{.Domain}}/oauth/token</code></p>
+        <p><strong>UserInfo URL:</strong> <code>https://{{.Domain}}/oauth/userinfo</code></p>
+        <p><strong>OIDC Discovery:</strong> <code>https://{{.Domain}}/.well-known/openid-configuration</code></p>
+        <p><strong>JWKS:</strong> <code>https://{{.Domain}}/oauth/jwks</code></p>
+        <p style="margin-top:8px;"><strong>Scopes:</strong> <code>openid email profile</code></p>
+    </div>
+</div>
+{{end}}

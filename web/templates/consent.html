@@ -1,0 +1,32 @@
+{{define "title-consent"}}Authorize{{end}}
+{{define "content-consent"}}
+<div class="login-container">
+    <div class="card">
+        <h2>Authorize Application</h2>
+        <p style="margin-bottom:16px;color:#666;">
+            <strong>{{.OAuthClientName}}</strong> wants to access your account.
+        </p>
+        <div style="background:#f5faff;padding:12px;border-radius:4px;margin-bottom:16px;">
+            <p style="font-size:0.9em;color:#555;">This will allow the application to:</p>
+            <ul style="margin:8px 0 0;padding-left:20px;font-size:0.9em;color:#555;">
+                <li>View your email address and name</li>
+                <li>Verify your identity</li>
+            </ul>
+        </div>
+        <p style="font-size:0.85em;color:#888;margin-bottom:16px;">
+            Signed in as <strong>{{.Email}}</strong>
+        </p>
+        <form method="POST" action="/oauth/authorize">
+            <input type="hidden" name="client_id" value="{{.OAuthClientID}}">
+            <input type="hidden" name="redirect_uri" value="{{.OAuthRedirectURI}}">
+            <input type="hidden" name="scope" value="{{.OAuthScope}}">
+            <input type="hidden" name="state" value="{{.OAuthState}}">
+            <input type="hidden" name="nonce" value="{{.OAuthNonce}}">
+            <div style="display:flex;gap:8px;">
+                <button type="submit" name="action" value="approve" class="btn" style="flex:1;">Allow</button>
+                <button type="submit" name="action" value="deny" class="btn btn-secondary" style="flex:1;">Deny</button>
+            </div>
+        </form>
+    </div>
+</div>
+{{end}}

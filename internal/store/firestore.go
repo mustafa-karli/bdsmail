@@ -854,3 +854,36 @@ func (db *DbFirestore) DeleteContact(id string) error {
 	_, err := db.contacts().Doc(id).Delete(context.Background())
 	return err
 }
+
+// --- OAuth operations (not yet implemented for Firestore) ---
+
+func (db *DbFirestore) CreateOAuthClient(client *model.OAuthClient) error {
+	return fmt.Errorf("OAuth not supported on Firestore backend")
+}
+func (db *DbFirestore) GetOAuthClient(clientID string) (*model.OAuthClient, error) {
+	return nil, fmt.Errorf("OAuth not supported on Firestore backend")
+}
+func (db *DbFirestore) ListOAuthClients(ownerEmail string) ([]*model.OAuthClient, error) {
+	return nil, fmt.Errorf("OAuth not supported on Firestore backend")
+}
+func (db *DbFirestore) DeleteOAuthClient(id string) error {
+	return fmt.Errorf("OAuth not supported on Firestore backend")
+}
+func (db *DbFirestore) CreateOAuthCode(code *model.OAuthCode) error {
+	return fmt.Errorf("OAuth not supported on Firestore backend")
+}
+func (db *DbFirestore) GetOAuthCode(code string) (*model.OAuthCode, error) {
+	return nil, fmt.Errorf("OAuth not supported on Firestore backend")
+}
+func (db *DbFirestore) MarkOAuthCodeUsed(code string) error {
+	return fmt.Errorf("OAuth not supported on Firestore backend")
+}
+func (db *DbFirestore) CreateOAuthToken(token *model.OAuthToken) error {
+	return fmt.Errorf("OAuth not supported on Firestore backend")
+}
+func (db *DbFirestore) GetOAuthToken(token string) (*model.OAuthToken, error) {
+	return nil, fmt.Errorf("OAuth not supported on Firestore backend")
+}
+func (db *DbFirestore) DeleteOAuthToken(token string) error {
+	return fmt.Errorf("OAuth not supported on Firestore backend")
+}

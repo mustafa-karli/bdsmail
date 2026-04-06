@@ -73,6 +73,20 @@ const (
 	QListContacts  = "list_contacts"
 	QUpdateContact = "update_contact"
 	QDeleteContact = "delete_contact"
+
+	// OAuth
+	QCreateOAuthClient     = "create_oauth_client"
+	QGetOAuthClient        = "get_oauth_client"
+	QListOAuthClients      = "list_oauth_clients"
+	QDeleteOAuthClient     = "delete_oauth_client"
+	QCreateOAuthCode       = "create_oauth_code"
+	QGetOAuthCode          = "get_oauth_code"
+	QMarkOAuthCodeUsed     = "mark_oauth_code_used"
+	QCreateOAuthToken      = "create_oauth_token"
+	QGetOAuthToken         = "get_oauth_token"
+	QDeleteOAuthToken      = "delete_oauth_token"
+	QDeleteExpiredOAuthCodes  = "delete_expired_oauth_codes"
+	QDeleteExpiredOAuthTokens = "delete_expired_oauth_tokens"
 )
 
 // Database is the interface all database backends implement.
@@ -140,6 +154,18 @@ type Database interface {
 	ListContacts(ownerEmail string) ([]*model.Contact, error)
 	UpdateContact(contact *model.Contact) error
 	DeleteContact(id string) error
+
+	// OAuth operations
+	CreateOAuthClient(client *model.OAuthClient) error
+	GetOAuthClient(clientID string) (*model.OAuthClient, error)
+	ListOAuthClients(ownerEmail string) ([]*model.OAuthClient, error)
+	DeleteOAuthClient(id string) error
+	CreateOAuthCode(code *model.OAuthCode) error
+	GetOAuthCode(code string) (*model.OAuthCode, error)
+	MarkOAuthCodeUsed(code string) error
+	CreateOAuthToken(token *model.OAuthToken) error
+	GetOAuthToken(token string) (*model.OAuthToken, error)
+	DeleteOAuthToken(token string) error
 }
 
 // NoSQL document structs — shared by DynamoDB and Firestore via dual tags.
@@ -791,5 +817,98 @@ func (db *DbSQL) UpdateContact(contact *model.Contact) error {
 
 func (db *DbSQL) DeleteContact(id string) error {
 	_, err := db.Conn.Exec(db.Queries[QDeleteContact], id)
+	return err
+}
+
+// --- OAuth operations ---
+
+func (db *DbSQL) CreateOAuthClient(client *model.OAuthClient) error {
+	_, err := db.Conn.Exec(db.Queries[QCreateOAuthClient],
+		client.ID, client.Name, client.ClientID, client.SecretHash,
+		client.RedirectURI, client.OwnerEmail)
+	return err
+}
+
+func (db *DbSQL) GetOAuthClient(clientID string) (*model.OAuthClient, error) {
+	c := &model.OAuthClient{}
+	var createdAt interface{}
+	err := db.Conn.QueryRow(db.Queries[QGetOAuthClient], clientID).Scan(
+		&c.ID, &c.Name, &c.ClientID, &c.SecretHash, &c.RedirectURI, &c.OwnerEmail, &createdAt)
+	if err != nil {
+		return nil, err
+	}
+	c.CreatedAt = scanTime(createdAt)
+	return c, nil
+}
+
+func (db *DbSQL) ListOAuthClients(ownerEmail string) ([]*model.OAuthClient, error) {
+	rows, err := db.Conn.Query(db.Queries[QListOAuthClients], ownerEmail)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var clients []*model.OAuthClient
+	for rows.Next() {
+		c := &model.OAuthClient{}
+		var createdAt interface{}
+		if err := rows.Scan(&c.ID, &c.Name, &c.ClientID, &c.SecretHash, &c.RedirectURI, &c.OwnerEmail, &createdAt); err != nil {
+			return nil, err
+		}
+		c.CreatedAt = scanTime(createdAt)
+		clients = append(clients, c)
+	}
+	return clients, nil
+}
+
+func (db *DbSQL) DeleteOAuthClient(id string) error {
+	_, err := db.Conn.Exec(db.Queries[QDeleteOAuthClient], id)
+	return err
+}
+
+func (db *DbSQL) CreateOAuthCode(code *model.OAuthCode) error {
+	_, err := db.Conn.Exec(db.Queries[QCreateOAuthCode],
+		code.Code, code.ClientID, code.UserEmail, code.RedirectURI,
+		code.Scope, code.Nonce, db.FormatTime(code.ExpiresAt), db.FormatBool(false))
+	return err
+}
+
+func (db *DbSQL) GetOAuthCode(code string) (*model.OAuthCode, error) {
+	c := &model.OAuthCode{}
+	var expiresAt, used interface{}
+	err := db.Conn.QueryRow(db.Queries[QGetOAuthCode], code).Scan(
+		&c.Code, &c.ClientID, &c.UserEmail, &c.RedirectURI, &c.Scope, &c.Nonce, &expiresAt, &used)
+	if err != nil {
+		return nil, err
+	}
+	c.ExpiresAt = scanTime(expiresAt)
+	c.Used = scanBool(used)
+	return c, nil
+}
+
+func (db *DbSQL) MarkOAuthCodeUsed(code string) error {
+	_, err := db.Conn.Exec(db.Queries[QMarkOAuthCodeUsed], code)
+	return err
+}
+
+func (db *DbSQL) CreateOAuthToken(token *model.OAuthToken) error {
+	_, err := db.Conn.Exec(db.Queries[QCreateOAuthToken],
+		token.Token, token.ClientID, token.UserEmail, token.Scope, db.FormatTime(token.ExpiresAt))
+	return err
+}
+
+func (db *DbSQL) GetOAuthToken(token string) (*model.OAuthToken, error) {
+	t := &model.OAuthToken{}
+	var expiresAt interface{}
+	err := db.Conn.QueryRow(db.Queries[QGetOAuthToken], token).Scan(
+		&t.Token, &t.ClientID, &t.UserEmail, &t.Scope, &expiresAt)
+	if err != nil {
+		return nil, err
+	}
+	t.ExpiresAt = scanTime(expiresAt)
+	return t, nil
+}
+
+func (db *DbSQL) DeleteOAuthToken(token string) error {
+	_, err := db.Conn.Exec(db.Queries[QDeleteOAuthToken], token)
 	return err
 }

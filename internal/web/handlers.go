@@ -56,6 +56,15 @@ type pageData struct {
 	UnreadCount     int
 	Page            int
 	TotalPages      int
+	// OAuth
+	OAuthClients    interface{}
+	OAuthClientID   string
+	OAuthClientName string
+	OAuthRedirectURI string
+	OAuthScope      string
+	OAuthState      string
+	OAuthNonce      string
+	NewClient       interface{}
 }
 
 type contactView struct {

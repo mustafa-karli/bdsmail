@@ -5,10 +5,12 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/mustafakarli/bdsmail/config"
 	"github.com/mustafakarli/bdsmail/internal/carddav"
+	"github.com/mustafakarli/bdsmail/internal/oauth"
 	"github.com/mustafakarli/bdsmail/internal/security"
 	"github.com/mustafakarli/bdsmail/internal/smtp"
 	"github.com/mustafakarli/bdsmail/internal/store"
@@ -164,12 +166,78 @@ func (s *Server) Start() error {
 		s.handlers.HandleFolder(w, r, s.renderer("inbox"))
 	})
 
+	// OAuth / OIDC
+	issuer := "https://mail." + s.cfg.Domains[0]
+	oauthHandler := oauth.NewHandler(s.handlers.store.DB, issuer)
+	oauthWeb := NewOAuthWebHandlers(s.handlers, oauthHandler)
+
+	mux.HandleFunc("/developer", func(w http.ResponseWriter, r *http.Request) {
+		oauthWeb.HandleDeveloper(w, r, s.renderer("developer"))
+	})
+	mux.HandleFunc("/oauth/authorize", func(w http.ResponseWriter, r *http.Request) {
+		oauthWeb.HandleAuthorize(w, r, s.renderer("consent"))
+	})
+	mux.HandleFunc("/oauth/token", oauthHandler.HandleToken)
+	mux.HandleFunc("/oauth/userinfo", oauthHandler.HandleUserInfo)
+	mux.HandleFunc("/oauth/jwks", oauthHandler.HandleJWKS)
+	mux.HandleFunc("/.well-known/openid-configuration", oauthHandler.HandleDiscovery)
+
 	// CardDAV
 	carddavHandler := carddav.NewHandler(s.handlers.store)
 	mux.Handle("/carddav/", carddavHandler)
 	mux.HandleFunc("/.well-known/carddav", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/carddav/", http.StatusMovedPermanently)
 	})
+
+	// JSON API routes (for Vue SPA)
+	api := NewAPIHandlers(s.handlers, s.admin, oauthHandler)
+	mux.HandleFunc("/api/auth/me", api.HandleAuthMe)
+	mux.HandleFunc("/api/auth/login", api.HandleAuthLogin)
+	mux.HandleFunc("/api/auth/logout", api.HandleAuthLogout)
+	mux.HandleFunc("/api/messages", api.HandleMessages)
+	mux.HandleFunc("/api/messages/", api.HandleMessage)
+	mux.HandleFunc("/api/compose", api.HandleCompose)
+	mux.HandleFunc("/api/search", api.HandleSearch)
+	mux.HandleFunc("/api/folders", api.HandleFolders)
+	mux.HandleFunc("/api/unread", api.HandleUnread)
+	mux.HandleFunc("/api/filters", api.HandleFilters)
+	mux.HandleFunc("/api/filters/", api.HandleFilters)
+	mux.HandleFunc("/api/autoreply", api.HandleAutoReply)
+	mux.HandleFunc("/api/contacts", api.HandleContacts)
+	mux.HandleFunc("/api/contacts/", api.HandleContacts)
+	mux.HandleFunc("/api/admin/login", api.HandleAdminLogin)
+	mux.HandleFunc("/api/admin/domains", api.HandleAdminDomains)
+	mux.HandleFunc("/api/admin/users", api.HandleAdminUsers)
+	mux.HandleFunc("/api/admin/aliases", api.HandleAdminAliases)
+	mux.HandleFunc("/api/admin/lists", api.HandleAdminLists)
+	mux.HandleFunc("/api/admin/lists/members", api.HandleAdminListMembers)
+	mux.HandleFunc("/api/oauth/clients", api.HandleOAuthClients)
+	mux.HandleFunc("/api/oauth/clients/", api.HandleOAuthClients)
+	mux.HandleFunc("/api/admin/logout", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "bdsmail_admin", Value: "", Path: "/", MaxAge: -1})
+		jsonOK(w, map[string]string{"status": "ok"})
+	})
+
+	// Serve Vue SPA from web/vue/dist/ if it exists
+	vueDist := "web/vue/dist"
+	if info, err := os.Stat(vueDist); err == nil && info.IsDir() {
+		vueFS := http.FileServer(http.Dir(vueDist))
+		mux.HandleFunc("/app/", func(w http.ResponseWriter, r *http.Request) {
+			// SPA fallback: serve index.html for non-file paths
+			path := strings.TrimPrefix(r.URL.Path, "/app")
+			if path == "" || path == "/" {
+				http.ServeFile(w, r, vueDist+"/index.html")
+				return
+			}
+			// Try serving the file; if not found, serve index.html
+			if _, err := os.Stat(vueDist + path); os.IsNotExist(err) {
+				http.ServeFile(w, r, vueDist+"/index.html")
+				return
+			}
+			http.StripPrefix("/app", vueFS).ServeHTTP(w, r)
+		})
+		log.Printf("Vue SPA available at /app/")
+	}
 
 	addr := ":" + s.cfg.HTTPSPort
 	log.Printf("Web server starting on %s", addr)
