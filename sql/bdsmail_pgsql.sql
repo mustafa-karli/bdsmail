@@ -174,3 +174,14 @@ CREATE TABLE IF NOT EXISTS login_token (
     created_at TIMESTAMPTZ DEFAULT NOW(),
     expires_at TIMESTAMPTZ NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS domain_signup (
+    id TEXT PRIMARY KEY,
+    domain TEXT UNIQUE NOT NULL,
+    username TEXT NOT NULL,
+    display_name TEXT NOT NULL DEFAULT '',
+    password_hash TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL
+);

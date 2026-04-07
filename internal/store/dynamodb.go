@@ -1066,6 +1066,16 @@ func (db *DbDynamo) unmarshalContact(item map[string]types.AttributeValue) (*mod
 	return c, nil
 }
 
+// --- Signup operations (stub for DynamoDB) ---
+
+func (db *DbDynamo) CreateSignup(signup *model.DomainSignup) error {
+	return fmt.Errorf("signup not yet implemented for DynamoDB")
+}
+func (db *DbDynamo) GetSignup(id string) (*model.DomainSignup, error) {
+	return nil, fmt.Errorf("not found")
+}
+func (db *DbDynamo) DeleteSignup(id string) error { return nil }
+
 // --- Attachment operations (stub for DynamoDB) ---
 
 func (db *DbDynamo) SaveAttachment(att *model.Attachment) error {

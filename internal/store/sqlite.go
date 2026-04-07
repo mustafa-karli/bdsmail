@@ -100,6 +100,11 @@ func sqliteQueries() map[string]string {
 		QUpdateContact: `UPDATE user_contact SET vcard_data = ?, etag = ?, updated_at = datetime('now') WHERE id = ?`,
 		QDeleteContact: `DELETE FROM user_contact WHERE id = ?`,
 
+		// Signup
+		QCreateSignup: `INSERT INTO domain_signup (id, domain, username, display_name, password_hash, status, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		QGetSignup:    `SELECT id, domain, username, display_name, password_hash, status, created_at, expires_at FROM domain_signup WHERE id = ?`,
+		QDeleteSignup: `DELETE FROM domain_signup WHERE id = ?`,
+
 		// Attachments
 		QSaveAttachment:        `INSERT INTO mail_attachment (id, mail_content_id, filename, content_type, size, bucket_key) VALUES (?, ?, ?, ?, ?, ?)`,
 		QListAttachments:       `SELECT id, mail_content_id, filename, content_type, size, bucket_key FROM mail_attachment WHERE mail_content_id = ?`,

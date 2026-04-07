@@ -95,6 +95,11 @@ func pgsqlQueries() map[string]string {
 		QUpdateContact: `UPDATE user_contact SET vcard_data = $1, etag = $2, updated_at = NOW() WHERE id = $3`,
 		QDeleteContact: `DELETE FROM user_contact WHERE id = $1`,
 
+		// Signup
+		QCreateSignup: `INSERT INTO domain_signup (id, domain, username, display_name, password_hash, status, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		QGetSignup:    `SELECT id, domain, username, display_name, password_hash, status, created_at, expires_at FROM domain_signup WHERE id = $1`,
+		QDeleteSignup: `DELETE FROM domain_signup WHERE id = $1`,
+
 		// Attachments
 		QSaveAttachment:       `INSERT INTO mail_attachment (id, mail_content_id, filename, content_type, size, bucket_key) VALUES ($1, $2, $3, $4, $5, $6)`,
 		QListAttachments:      `SELECT id, mail_content_id, filename, content_type, size, bucket_key FROM mail_attachment WHERE mail_content_id = $1`,

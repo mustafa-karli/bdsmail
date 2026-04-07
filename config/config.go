@@ -29,7 +29,8 @@ var (
 	FlagDKIMSelector = flag.String("dkim_selector", "default", "DKIM selector name")
 	FlagSSLDir      = flag.String("ssl_dir", "/opt/bdsmail/ssl", "Per-domain SSL certificate directory")
 	FlagAcmeWebroot = flag.String("acme_webroot", "/opt/bdsmail/acme", "ACME challenge webroot")
-	FlagAmplifyURL  = flag.String("amplify_url", "", "Amplify app URL for webmail CNAME")
+	FlagAmplifyURL    = flag.String("amplify_url", "", "Amplify app URL for webmail CNAME")
+	FlagMailHostname  = flag.String("mail_hostname", "", "Shared mail hostname for customer CNAME/MX (e.g. mailsrv.bdscont.com)")
 	FlagMaxAttachmentBytes = flag.Int64("max_attachment_bytes", 10*1024*1024, "Maximum attachment size in bytes")
 )
 
@@ -61,6 +62,7 @@ type Config struct {
 	S3Bucket           string
 	MaxAttachmentBytes int64
 	AmplifyURL         string
+	MailHostname       string
 	Secrets            port.SecretProvider
 }
 
@@ -98,6 +100,7 @@ func Load() *Config {
 		S3Bucket:           *FlagS3Bucket,
 		MaxAttachmentBytes: *FlagMaxAttachmentBytes,
 		AmplifyURL:         *FlagAmplifyURL,
+		MailHostname:       *FlagMailHostname,
 		Secrets:            sp,
 	}
 

@@ -22,7 +22,8 @@ ExecStart=/opt/bdsmail/bin/bdsmail \
   --s3_bucket=bdsmail-952191196215 \
   --s3_region=us-west-2 \
   --secret_mode=local \
-  --keystore=/opt/bdsmail/sec/secrets.json
+  --keystore=/opt/bdsmail/sec/secrets.json \
+  --mail_hostname=mailsrv.bdscont.com
 Restart=always
 RestartSec=5
 

@@ -95,6 +95,17 @@ func (s *Server) Start() error {
 		mux.Handle("/.well-known/", acmeFS)
 	}
 
+	// Public signup routes (no auth required)
+	signupHandlers := NewSignupHandlers(s.handlers)
+	mux.HandleFunc("/signup", func(w http.ResponseWriter, r *http.Request) {
+		signupHandlers.HandleSignup(w, r, s.renderer("signup"))
+	})
+	mux.HandleFunc("/signup/verify", func(w http.ResponseWriter, r *http.Request) {
+		signupHandlers.HandleSignupVerify(w, r, s.renderer("signup_verify"))
+	})
+	mux.HandleFunc("/api/signup", signupHandlers.APICreateSignup)
+	mux.HandleFunc("/api/signup/verify", signupHandlers.APIVerifySignup)
+
 	// Mail routes
 	mux.HandleFunc("/", s.handlers.HandleIndex)
 

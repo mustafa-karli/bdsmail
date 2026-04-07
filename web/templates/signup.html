@@ -1,0 +1,33 @@
+{{define "title-signup"}}Sign Up{{end}}
+{{define "content-signup"}}
+<div class="login-container" style="max-width:500px;">
+    <div class="card">
+        <h2>Register Your Domain</h2>
+        <p style="color:#666;margin-bottom:16px;">Get your own email server in minutes.</p>
+        {{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+        <form method="POST" action="/signup">
+            <div class="form-group">
+                <label for="domain">Domain Name</label>
+                <input type="text" id="domain" name="domain" placeholder="yourdomain.com" required autofocus>
+            </div>
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text" id="username" name="username" placeholder="admin">
+                <p style="font-size:0.8em;color:#888;">Your email will be username@yourdomain.com</p>
+            </div>
+            <div class="form-group">
+                <label for="display_name">Display Name</label>
+                <input type="text" id="display_name" name="display_name" placeholder="John Smith">
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" placeholder="min 8 characters" required minlength="8">
+            </div>
+            <button type="submit" class="btn" style="width:100%;">Continue</button>
+        </form>
+        <p style="margin-top:12px;font-size:0.85em;color:#888;text-align:center;">
+            Already have an account? <a href="/login">Login</a>
+        </p>
+    </div>
+</div>
+{{end}}

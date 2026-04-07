@@ -316,13 +316,63 @@ systemctl status bdsmail
 journalctl -u bdsmail -f
 ```
 
-### Step 8: Set Up Certificate Renewal
+### Step 8: Bootstrap First Domain
+
+The first domain must be set up manually. Subsequent domains use the admin panel.
 
 ```bash
-# Upload renewal script
-scp scripts/renew_certs.sh admin@<lightsail-ip>:/opt/bdsmail/scripts/
+ssh bdsmail
+sudo -i
 
-# On server — add daily cron at 2 AM
+# Insert domain into database
+psql -h localhost -U bdsmail -d bdsmail << 'SQL'
+INSERT INTO domain (name, status, created_by) VALUES ('yourdomain.com', 'active', 'admin');
+UPDATE domain SET ses_status = 'Success', dkim_status = 'Success' WHERE name = 'yourdomain.com';
+SQL
+
+# Install certbot
+apt-get install -y certbot
+
+# Stop bdsmail temporarily (certbot needs port 80)
+systemctl stop bdsmail
+
+# Issue TLS certificate
+certbot certonly --standalone \
+    -d mail.yourdomain.com \
+    --non-interactive --agree-tos \
+    --email admin@yourdomain.com
+
+# Copy cert to bdsmail SSL directory
+mkdir -p /opt/bdsmail/ssl/yourdomain.com
+cp /etc/letsencrypt/live/mail.yourdomain.com/fullchain.pem /opt/bdsmail/ssl/yourdomain.com/
+cp /etc/letsencrypt/live/mail.yourdomain.com/privkey.pem /opt/bdsmail/ssl/yourdomain.com/
+chown -R bdsmail:bdsmail /opt/bdsmail/ssl
+
+# Generate DKIM key
+mkdir -p /opt/bdsmail/dkim
+openssl genrsa -out /opt/bdsmail/dkim/yourdomain.com.pem 2048
+chmod 600 /opt/bdsmail/dkim/yourdomain.com.pem
+chown bdsmail:bdsmail /opt/bdsmail/dkim/yourdomain.com.pem
+
+# Print DKIM public key for DNS
+openssl rsa -in /opt/bdsmail/dkim/yourdomain.com.pem -pubout -outform DER | openssl base64 -A
+echo ""
+# Add this as TXT record: default._domainkey.yourdomain.com → v=DKIM1; k=rsa; p=<output>
+
+# Start bdsmail
+systemctl start bdsmail
+journalctl -u bdsmail -n 10
+
+# Create first user
+/opt/bdsmail/bin/bdsmail -adduser admin@yourdomain.com -password 'your-password' -displayname 'Admin'
+```
+
+Verify: open `https://mail.yourdomain.com` — you should see the login page.
+
+### Step 9: Set Up Certificate Renewal
+
+```bash
+# Add daily cron at 2 AM for cert renewal
 echo "0 2 * * * /opt/bdsmail/scripts/renew_certs.sh /opt/bdsmail/ssl >> /var/log/bdsmail-certs.log 2>&1" | crontab -
 ```
 

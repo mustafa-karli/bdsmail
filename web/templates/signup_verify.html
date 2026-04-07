@@ -1,0 +1,49 @@
+{{define "title-signup_verify"}}Verify Domain{{end}}
+{{define "content-signup_verify"}}
+<div class="card" style="max-width:700px;margin:40px auto;">
+    <h2>Verify Domain: {{.Domain}}</h2>
+    {{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+    {{if .Success}}
+    <div class="alert alert-success">{{.Success}}</div>
+    <h3 style="color:#1976D2;margin-top:16px;margin-bottom:12px;">Additional DNS Records</h3>
+    <p style="color:#666;margin-bottom:12px;">Add these records for DKIM and email delivery:</p>
+    {{else}}
+    <p style="color:#666;margin-bottom:16px;">Add the following DNS records to your domain, then click <strong>Verify</strong>.</p>
+    {{end}}
+
+    {{if .AdminData}}
+    <table class="message-list">
+        <thead><tr><th>Type</th><th>Name</th><th>Value</th><th>Priority</th></tr></thead>
+        <tbody>
+            {{range .AdminData}}
+            <tr>
+                <td><strong>{{.Type}}</strong></td>
+                <td>{{.Name}}</td>
+                <td style="word-break:break-all;max-width:400px;font-size:0.85em;">{{.Value}}</td>
+                <td>{{.Priority}}</td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+    {{end}}
+
+    {{if not .Success}}
+    <div style="margin-top:16px;padding:12px;background:#f5faff;border-radius:4px;">
+        <p style="font-size:0.9em;color:#555;margin-bottom:8px;"><strong>How to add DNS records:</strong></p>
+        <ol style="font-size:0.85em;color:#666;padding-left:20px;">
+            <li>Log in to your DNS provider (GoDaddy, Cloudflare, Route 53, etc.)</li>
+            <li>Add each record above to your domain</li>
+            <li>Wait 5-15 minutes for DNS propagation</li>
+            <li>Click Verify below</li>
+        </ol>
+    </div>
+    <form method="POST" action="/signup/verify?id={{.OAuthState}}" style="margin-top:16px;">
+        <button type="submit" class="btn" style="width:100%;">Verify DNS Records</button>
+    </form>
+    {{else}}
+    <div style="margin-top:16px;">
+        <a href="/inbox" class="btn" style="width:100%;display:block;text-align:center;">Go to Inbox</a>
+    </div>
+    {{end}}
+</div>
+{{end}}

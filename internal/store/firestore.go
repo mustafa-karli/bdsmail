@@ -870,6 +870,16 @@ func (db *DbFirestore) DeleteContact(id string) error {
 	return err
 }
 
+// --- Signup operations (stub for Firestore) ---
+
+func (db *DbFirestore) CreateSignup(signup *model.DomainSignup) error {
+	return fmt.Errorf("signup not yet implemented for Firestore")
+}
+func (db *DbFirestore) GetSignup(id string) (*model.DomainSignup, error) {
+	return nil, fmt.Errorf("not found")
+}
+func (db *DbFirestore) DeleteSignup(id string) error { return nil }
+
 // --- Attachment operations (stub for Firestore) ---
 
 func (db *DbFirestore) SaveAttachment(att *model.Attachment) error {

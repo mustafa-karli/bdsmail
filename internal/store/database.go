@@ -81,6 +81,11 @@ const (
 	QGetAttachment        = "get_attachment"
 	QDeleteAttachmentsByMsg = "delete_attachments_by_msg"
 
+	// Signup
+	QCreateSignup = "create_signup"
+	QGetSignup    = "get_signup"
+	QDeleteSignup = "delete_signup"
+
 	// Auth / 2FA
 	QEnable2FA          = "enable_2fa"
 	QDisable2FA         = "disable_2fa"
@@ -190,6 +195,12 @@ type ContactStore interface {
 	DeleteContact(id string) error
 }
 
+type SignupStore interface {
+	CreateSignup(signup *model.DomainSignup) error
+	GetSignup(id string) (*model.DomainSignup, error)
+	DeleteSignup(id string) error
+}
+
 type AttachmentStore interface {
 	SaveAttachment(att *model.Attachment) error
 	ListAttachments(mailContentID string) ([]model.Attachment, error)
@@ -247,6 +258,7 @@ type Database interface {
 	FilterStore
 	AutoReplyStore
 	ContactStore
+	SignupStore
 	AttachmentStore
 	AuthStore
 	DomainStore
@@ -908,6 +920,34 @@ func (db *DbSQL) UpdateContact(contact *model.Contact) error {
 
 func (db *DbSQL) DeleteContact(id string) error {
 	_, err := db.Conn.Exec(db.Queries[QDeleteContact], id)
+	return err
+}
+
+// --- Signup operations ---
+
+func (db *DbSQL) CreateSignup(signup *model.DomainSignup) error {
+	_, err := db.Conn.Exec(db.Queries[QCreateSignup],
+		signup.ID, signup.Domain, signup.Username, signup.DisplayName,
+		signup.PasswordHash, signup.Status, db.FormatTime(signup.ExpiresAt))
+	return err
+}
+
+func (db *DbSQL) GetSignup(id string) (*model.DomainSignup, error) {
+	s := &model.DomainSignup{}
+	var createdAt, expiresAt interface{}
+	err := db.Conn.QueryRow(db.Queries[QGetSignup], id).Scan(
+		&s.ID, &s.Domain, &s.Username, &s.DisplayName,
+		&s.PasswordHash, &s.Status, &createdAt, &expiresAt)
+	if err != nil {
+		return nil, err
+	}
+	s.CreatedAt = scanTime(createdAt)
+	s.ExpiresAt = scanTime(expiresAt)
+	return s, nil
+}
+
+func (db *DbSQL) DeleteSignup(id string) error {
+	_, err := db.Conn.Exec(db.Queries[QDeleteSignup], id)
 	return err
 }
 

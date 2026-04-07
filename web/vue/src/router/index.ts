@@ -5,6 +5,7 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/login', component: () => import('../views/LoginView.vue'), meta: { public: true } },
+    { path: '/signup', component: () => import('../views/SignupView.vue'), meta: { public: true } },
     { path: '/verify-2fa', component: () => import('../views/Verify2FAView.vue'), meta: { public: true } },
     { path: '/', redirect: '/inbox' },
     { path: '/inbox', component: () => import('../views/InboxView.vue'), props: { folder: 'INBOX' } },
