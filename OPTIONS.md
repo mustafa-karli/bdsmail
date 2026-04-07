@@ -6,13 +6,25 @@ Design decisions, alternatives considered, and current implementation choices fo
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for full step-by-step instructions.
 
-| Option | Stack | Monthly Cost | Best For |
-|--------|-------|-------------|----------|
-| **AWS Self-Hosted PG + SES + S3** | Lightsail $5, self-hosted PostgreSQL, S3, SES | **~$5-6** | Recommended startup |
-| **AWS Lightsail + DynamoDB + SES** | Lightsail $5, DynamoDB free, S3, SES | **~$6** | Managed DB, no search |
-| **GCP + Firestore + SES** | e2-micro, Firestore free, GCS, SES | **~$10.50** | GCP ecosystem |
-| **GCP + Cloud SQL** | e2-micro, managed PostgreSQL, GCS, SES | **~$20.50** | Managed PG on GCP |
-| **AWS EC2 + RDS** | t4g.micro, managed PostgreSQL, S3, SES | **~$22.30** | Managed PG on AWS |
+### Option 1: AWS
+
+Lightsail + SES always on. Choose database:
+
+| DB Option | Cost | Search | Managed |
+|-----------|------|--------|---------|
+| Self-hosted PostgreSQL | **~$5-6/mo** (recommended) | Full | No → migrate to RDS later |
+| DynamoDB (free tier) | **~$6/mo** | Scan only | Yes |
+| RDS PostgreSQL | **~$20/mo** | Full | Yes |
+
+### Option 2: GCP
+
+e2-micro VM always on. Choose relay and database:
+
+| DB Option | Cost | Search | Managed |
+|-----------|------|--------|---------|
+| Self-hosted PostgreSQL | **~$10.50/mo** | Full | No → migrate to Cloud SQL later |
+| Firestore (free tier) | **~$10.50/mo** | Client-side | Yes |
+| Cloud SQL PostgreSQL | **~$20.50/mo** | Full | Yes |
 
 ### Recommended: Self-Hosted PostgreSQL on Lightsail
 
