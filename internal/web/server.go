@@ -187,7 +187,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/auth/trusted-devices/revoke", twoFA.APIRevokeTrustedDevice)
 
 	// OAuth / OIDC
-	oauthIssuer := "https://mail." + s.cfg.Domains[0]
+	oauthIssuer := "https://bdsmail.local"
+	if len(s.cfg.Domains) > 0 {
+		oauthIssuer = "https://mail." + s.cfg.Domains[0]
+	}
 	oauthHandler, err := oauth.NewHandler(s.handlers.store.DB, oauthIssuer)
 	if err != nil {
 		return fmt.Errorf("oauth handler init failed: %w", err)

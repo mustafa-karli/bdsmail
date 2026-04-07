@@ -537,7 +537,7 @@ All configuration via CLI flags. Secrets loaded from SecretProvider (`--secret_m
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--smtp_port` | SMTP port | `25` |
+| `--inbound_smtp_port` | Inbound SMTP server port | `25` |
 | `--pop3_port` | POP3 port | `110` |
 | `--imap_port` | IMAP port | `143` |
 | `--https_port` | HTTPS port | `443` |

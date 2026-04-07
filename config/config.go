@@ -14,10 +14,9 @@ import (
 
 // CLI flags specific to bdsmail (basis common flags are used for shared settings)
 var (
-	FlagSMTPPort    = flag.Int("smtp_port", 25, "SMTP server port")
+	FlagSMTPPort    = flag.Int("inbound_smtp_port", 25, "Inbound SMTP server port")
 	FlagPOP3Port    = flag.Int("pop3_port", 110, "POP3 server port")
 	FlagIMAPPort    = flag.Int("imap_port", 143, "IMAP server port")
-	FlagHTTPSPort   = flag.Int("https_port", 443, "HTTPS web UI port")
 	FlagHTTPPort    = flag.Int("http_port", 80, "HTTP port for ACME challenges")
 	FlagDBType      = flag.String("db_type", "postgres", "Database backend: postgres, sqlite, dynamodb, firestore")
 	FlagSQLitePath  = flag.String("sqlite_path", "/opt/bdsmail/bdsmail.db", "SQLite database file path")
@@ -83,7 +82,7 @@ func Load() *Config {
 		SMTPPort:     *FlagSMTPPort,
 		POP3Port:     *FlagPOP3Port,
 		IMAPPort:     *FlagIMAPPort,
-		HTTPSPort:    *FlagHTTPSPort,
+		HTTPSPort:    *common.HTTPSPort,
 		HTTPPort:     *FlagHTTPPort,
 		SSLDir:       *FlagSSLDir,
 		GCSBucket:    *FlagGCSBucket,
