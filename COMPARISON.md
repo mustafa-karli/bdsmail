@@ -49,19 +49,24 @@
 | **Docker** | Optional | No | Required | Optional | No | Required | Required | No |
 | **Single Binary** | Yes | No | No | Yes | No | No | No | No |
 | **Multi-Domain** | Yes (dynamic) | Yes | Yes | Yes | Single domain | Yes | Yes | Yes |
-| **Cloud DB Support** | PostgreSQL, SQLite, DynamoDB, Firestore | MySQL/PostgreSQL | MySQL | PostgreSQL, MySQL, SQLite, S3, Redis | PostgreSQL | PostgreSQL, MySQL, SQLite | None (file-based) | MySQL/MariaDB |
-| **Object Storage** | GCS, S3 | Local | Local | S3, local | Local | Local | Local | Local |
-| **External Relay** | SES, SendGrid, Mailgun, any SMTP | Yes | Yes | Yes | No | Yes | Yes | Yes |
-| **Auto TLS** | Let's Encrypt (built-in) | Yes | Yes | Yes (ACME) | Yes | Yes | Yes | No |
-| **Config Complexity** | Single `.env` file | Multi-file | Docker Compose | TOML/Web UI | Minimal | Docker Compose | Docker Compose + env | Multi-file XML |
+| **Self-Service Signup** | Yes (DNS verification) | No | No | No | No | No | No | No |
+| **App Tokens (send API)** | Yes (REST + SMTP) | No | No | No | No | No | No | No |
+| **Role-Based Access** | Yes (superadmin/owner/admin/user) | No | No | No | No | No | No | Yes |
+| **User Audit Trail** | Yes (login, suspend, role changes) | No | No | No | No | No | No | Yes |
+| | | | | | | | | |
+| **Cloud DB Support** | PostgreSQL, DynamoDB | MySQL/PostgreSQL | MySQL | PostgreSQL, MySQL, SQLite, S3, Redis | PostgreSQL | PostgreSQL, MySQL, SQLite | None (file-based) | MySQL/MariaDB |
+| **Object Storage** | Amazon S3 | Local | Local | S3, local | Local | Local | Local | Local |
+| **External Relay** | Amazon SES | Yes | Yes | Yes | No | Yes | Yes | Yes |
+| **Auto TLS** | Let's Encrypt (per-domain SNI) | Yes | Yes | Yes (ACME) | Yes | Yes | Yes | No |
+| **Config Complexity** | CLI flags + SecretProvider | Multi-file | Docker Compose | TOML/Web UI | Minimal | Docker Compose | Docker Compose + env | Multi-file XML |
 | **Min Resources** | ~128MB RAM | ~2GB RAM | ~4GB RAM | ~256MB RAM | ~1GB RAM | ~1GB RAM | ~1GB RAM | ~8GB RAM |
 
 ## Per-Server Summary
 
 ### bdsmail
-Single Go binary (~48MB) designed for cost-effective cloud deployment. Dual webmail interface: server-rendered Go templates for zero-dependency access, plus a Vue 3 SPA with full JSON REST API for modern client-side experience. Covers all major email security standards including MTA-STS, DANE, REQUIRETLS, and TLSRPT. Built-in OAuth 2.0 / OpenID Connect identity provider with self-service developer portal — the only mail server offering "Sign in with yourdomain.com." Pluggable database and storage backends across AWS and GCP. Runs on ~$6-20/month.
+Single Go binary (~75MB) designed as a multi-tenant email platform. Dual webmail interface: server-rendered Go templates + Vue 3 SPA with full JSON REST API. Self-service domain signup with DNS verification, role-based user management (superadmin/owner/admin/user), full audit trail, app tokens for REST + SMTP email sending, per-domain SNI TLS certificates, and built-in OAuth 2.0 / OIDC identity provider. Runs on AWS Lightsail + PostgreSQL + S3 + SES for ~$5-6/month.
 
-**Strengths:** Minimal footprint, cloud-native storage, comprehensive email security, single binary, dual webmail (Go templates + Vue SPA), JSON REST API, TOTP 2FA with backup codes and trusted devices, built-in OIDC identity provider, Google Safe Browsing.
+**Strengths:** Multi-tenant platform, self-service signup, app tokens (REST + SMTP), role-based access, audit trail, comprehensive email security (SPF/DKIM/DMARC/MTA-STS/DANE/REQUIRETLS/TLSRPT), 2FA with backup codes, OIDC identity provider, per-domain SNI TLS, single binary.
 **Gaps:** No CalDAV/calendar, no JMAP, no shared folders, no WYSIWYG editor.
 
 ### iRedMail
@@ -109,13 +114,14 @@ Enterprise-grade Java-based collaboration suite with email, calendar, contacts, 
 ## Key Takeaways
 
 ### Where bdsmail excels
+- **Multi-tenant platform** — Self-service domain signup with DNS verification, role-based user management, per-domain isolation
+- **App integration** — REST API + SMTP app tokens let any application send email without sharing passwords
 - **Email security** — Only server implementing SPF + DKIM + DMARC + MTA-STS + DANE + REQUIRETLS + TLSRPT together
-- **Identity provider** — Only mail server with built-in OAuth 2.0 / OIDC ("Sign in with yourdomain.com") and developer portal
-- **Modern API** — JSON REST API at `/api/*` with Vue 3 SPA frontend, while alternatives rely on server-rendered webmail
+- **Identity provider** — Only mail server with built-in OAuth 2.0 / OIDC ("Sign in with yourdomain.com")
+- **Modern API** — Full JSON REST API with Vue 3 SPA, while alternatives rely on server-rendered webmail
+- **Audit & compliance** — User history tracking (login, suspend, role changes) with timestamps and IP
 - **Resource efficiency** — Runs on ~128MB RAM vs 1-8GB for alternatives
-- **Cloud-native** — Native GCS/S3 and serverless DB support (DynamoDB, Firestore)
-- **Deployment simplicity** — Single binary, single `.env` file, from $6/month
-- **Unique features** — Google Safe Browsing, built-in mailing lists, dynamic domain addition
+- **Cost** — Full platform from $5/month on AWS Lightsail
 
 ### Where alternatives have an edge
 - **CalDAV/Calendar** — Stalwart, mailcow (SOGo), iRedMail (SOGo), Mail-in-a-Box (Nextcloud), Zimbra

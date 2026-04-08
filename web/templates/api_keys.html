@@ -1,0 +1,65 @@
+{{define "title-api_keys"}}API Keys{{end}}
+{{define "content-api_keys"}}
+<div class="card">
+    <div class="toolbar">
+        <h2>API Keys — {{.Domain}}</h2>
+        <a href="/inbox" class="btn btn-sm btn-secondary">Back to Inbox</a>
+    </div>
+
+    {{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+    {{if .Success}}<div class="alert alert-success">{{.Success}}</div>{{end}}
+
+    {{if .OAuthState}}
+    <div class="alert alert-success" style="background:#fff3cd;color:#856404;border-color:#ffeeba;">
+        <strong>Save this API key now — it won't be shown again.</strong><br><br>
+        <code style="font-size:1.1em;word-break:break-all;">{{.OAuthState}}</code>
+    </div>
+    {{end}}
+
+    <form method="POST" action="/settings/api-keys" style="margin-top:16px;">
+        <input type="hidden" name="action" value="create">
+        <h3 style="color:#1976D2;margin-bottom:12px;">Create API Key</h3>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;">
+            <div style="flex:1;"><label>Name</label><input type="text" name="name" placeholder="Registration App" required></div>
+            <div style="flex:1;"><label>Sender Email</label><input type="text" name="sender_email" placeholder="noreply@{{.Domain}}" required></div>
+            <button type="submit" class="btn" style="height:42px;">Create</button>
+        </div>
+    </form>
+
+    <h3 style="color:#1976D2;margin-top:24px;margin-bottom:12px;">Active Keys</h3>
+    <table class="message-list">
+        <thead><tr><th>Name</th><th>Sender</th><th>Created By</th><th>Last Used</th><th>Actions</th></tr></thead>
+        <tbody>
+            {{range .AdminData}}
+            <tr>
+                <td>{{.Name}}</td>
+                <td>{{.SenderEmail}}</td>
+                <td>{{.CreatedBy}}</td>
+                <td>{{if .LastUsedAt.IsZero}}<span style="color:#999;">Never</span>{{else}}{{.LastUsedAt.Format "Jan 02, 2006"}}{{end}}</td>
+                <td>
+                    <form method="POST" action="/settings/api-keys" style="display:inline;">
+                        <input type="hidden" name="action" value="delete">
+                        <input type="hidden" name="token_id" value="{{.ID}}">
+                        <button type="submit" class="btn btn-sm btn-secondary" onclick="return confirm('Revoke this API key?')">Revoke</button>
+                    </form>
+                </td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+
+    <h3 style="color:#1976D2;margin-top:24px;margin-bottom:12px;">Usage Example</h3>
+    <div style="background:#f5f5f5;padding:16px;border-radius:4px;font-size:0.85em;">
+        <pre style="margin:0;white-space:pre-wrap;">curl -X POST https://mail.{{.Domain}}/api/send \
+  -H "Authorization: Bearer bds_ak_YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "from": "noreply@{{.Domain}}",
+    "to": ["user@example.com"],
+    "subject": "Welcome!",
+    "body": "Thanks for signing up.",
+    "html": false
+  }'</pre>
+    </div>
+</div>
+{{end}}

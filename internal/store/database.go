@@ -91,6 +91,14 @@ const (
 	QAddHistory       = "add_history"
 	QGetHistory       = "get_history"
 
+	// App tokens
+	QCreateAppToken    = "create_app_token"
+	QListAppTokens     = "list_app_tokens"
+	QGetAppTokenByID   = "get_app_token_by_id"
+	QDeleteAppToken    = "delete_app_token"
+	QUpdateTokenUsed   = "update_token_used"
+	QListAllAppTokens  = "list_all_app_tokens"
+
 	// Permissions
 	QGrantPermission   = "grant_permission"
 	QRevokePermission  = "revoke_permission"
@@ -212,6 +220,15 @@ type ContactStore interface {
 	DeleteContact(id string) error
 }
 
+type AppTokenStore interface {
+	CreateAppToken(token *model.AppToken) error
+	ListAppTokens(domain string) ([]*model.AppToken, error)
+	GetAppTokenByID(id string) (*model.AppToken, error)
+	ListAllAppTokens() ([]*model.AppToken, error) // for token validation lookup
+	DeleteAppToken(id string) error
+	UpdateTokenLastUsed(id string) error
+}
+
 type HistoryStore interface {
 	AddHistory(h *model.UserHistory) error
 	GetHistory(email string) ([]*model.UserHistory, error)
@@ -293,6 +310,7 @@ type Database interface {
 	FilterStore
 	AutoReplyStore
 	ContactStore
+	AppTokenStore
 	HistoryStore
 	DomainDNSStore
 	PermissionStore
@@ -625,6 +643,70 @@ func (db *DbSQL) UpdateUser(email, displayName, passwordHash string) error {
 func (db *DbSQL) UpdateUserStatus(email, status string) error {
 	_, err := db.Conn.Exec(db.Queries[QUpdateUserStatus], status, email)
 	return err
+}
+
+// --- App token operations ---
+
+func (db *DbSQL) CreateAppToken(token *model.AppToken) error {
+	_, err := db.Conn.Exec(db.Queries[QCreateAppToken],
+		token.ID, token.Name, token.TokenHash, token.Domain, token.SenderEmail, token.CreatedBy)
+	return err
+}
+
+func (db *DbSQL) ListAppTokens(domain string) ([]*model.AppToken, error) {
+	rows, err := db.Conn.Query(db.Queries[QListAppTokens], domain)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return db.scanAppTokens(rows)
+}
+
+func (db *DbSQL) GetAppTokenByID(id string) (*model.AppToken, error) {
+	t := &model.AppToken{}
+	var createdAt, lastUsedAt interface{}
+	err := db.Conn.QueryRow(db.Queries[QGetAppTokenByID], id).Scan(
+		&t.ID, &t.Name, &t.TokenHash, &t.Domain, &t.SenderEmail, &t.CreatedBy, &createdAt, &lastUsedAt)
+	if err != nil {
+		return nil, err
+	}
+	t.CreatedAt = scanTime(createdAt)
+	t.LastUsedAt = scanTime(lastUsedAt)
+	return t, nil
+}
+
+func (db *DbSQL) ListAllAppTokens() ([]*model.AppToken, error) {
+	rows, err := db.Conn.Query(db.Queries[QListAllAppTokens])
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return db.scanAppTokens(rows)
+}
+
+func (db *DbSQL) DeleteAppToken(id string) error {
+	_, err := db.Conn.Exec(db.Queries[QDeleteAppToken], id)
+	return err
+}
+
+func (db *DbSQL) UpdateTokenLastUsed(id string) error {
+	_, err := db.Conn.Exec(db.Queries[QUpdateTokenUsed], id)
+	return err
+}
+
+func (db *DbSQL) scanAppTokens(rows *sql.Rows) ([]*model.AppToken, error) {
+	var tokens []*model.AppToken
+	for rows.Next() {
+		t := &model.AppToken{}
+		var createdAt, lastUsedAt interface{}
+		if err := rows.Scan(&t.ID, &t.Name, &t.TokenHash, &t.Domain, &t.SenderEmail, &t.CreatedBy, &createdAt, &lastUsedAt); err != nil {
+			return nil, err
+		}
+		t.CreatedAt = scanTime(createdAt)
+		t.LastUsedAt = scanTime(lastUsedAt)
+		tokens = append(tokens, t)
+	}
+	return tokens, nil
 }
 
 // --- History operations ---

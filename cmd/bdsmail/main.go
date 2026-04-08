@@ -49,12 +49,8 @@ func main() {
 	var db store.Database
 	var dbErr error
 	switch cfg.DBType {
-	case "sqlite":
-		db, dbErr = store.NewDbSqlite(cfg.SQLitePath)
 	case "dynamodb":
 		db, dbErr = store.NewDbDynamo(cfg.DynamoDBRegion)
-	case "firestore":
-		db, dbErr = store.NewDbFirestore(cfg.FirestoreProject)
 	default:
 		db, dbErr = store.NewDbPgsql(cfg.DatabaseURL)
 	}

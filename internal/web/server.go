@@ -190,6 +190,15 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/superadmin/domains", s.handlers.APISuperAdminDomains)
 	mux.HandleFunc("/api/superadmin/users", s.handlers.APISuperAdminUsers)
 
+	// API send (app token auth)
+	mux.HandleFunc("/api/send", s.handlers.HandleAPISend)
+
+	// API keys management (owner/admin only)
+	mux.HandleFunc("/settings/api-keys", func(w http.ResponseWriter, r *http.Request) {
+		s.handlers.HandleAPIKeys(w, r, s.renderer("api_keys"))
+	})
+	mux.HandleFunc("/api/app-tokens", s.handlers.HandleAPIKeysAPI)
+
 	// Domain user management (owner/admin only)
 	mux.HandleFunc("/settings/users", func(w http.ResponseWriter, r *http.Request) {
 		s.handlers.HandleDomainUsers(w, r, s.renderer("domain_users"))

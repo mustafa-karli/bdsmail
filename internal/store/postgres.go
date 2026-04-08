@@ -95,6 +95,14 @@ func pgsqlQueries() map[string]string {
 		QUpdateContact: `UPDATE user_contact SET vcard_data = $1, etag = $2, updated_at = NOW() WHERE id = $3`,
 		QDeleteContact: `DELETE FROM user_contact WHERE id = $1`,
 
+		// App tokens
+		QCreateAppToken:   `INSERT INTO app_token (id, name, token_hash, domain, sender_email, created_by) VALUES ($1, $2, $3, $4, $5, $6)`,
+		QListAppTokens:    `SELECT id, name, token_hash, domain, sender_email, created_by, created_at, last_used_at FROM app_token WHERE domain = $1 ORDER BY created_at DESC`,
+		QGetAppTokenByID:  `SELECT id, name, token_hash, domain, sender_email, created_by, created_at, last_used_at FROM app_token WHERE id = $1`,
+		QListAllAppTokens: `SELECT id, name, token_hash, domain, sender_email, created_by, created_at, last_used_at FROM app_token`,
+		QDeleteAppToken:   `DELETE FROM app_token WHERE id = $1`,
+		QUpdateTokenUsed:  `UPDATE app_token SET last_used_at = NOW() WHERE id = $1`,
+
 		// User status + history
 		QUpdateUserStatus: `UPDATE user_account SET status = $1 WHERE id = $2`,
 		QAddHistory:       `INSERT INTO user_history (user_email, action_type, performed_by, client_ip, detail) VALUES ($1, $2, $3, $4, $5)`,

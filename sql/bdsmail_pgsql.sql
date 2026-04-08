@@ -218,3 +218,15 @@ CREATE TABLE IF NOT EXISTS user_history (
     detail TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (user_email, action_time)
 );
+
+CREATE TABLE IF NOT EXISTS app_token (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    token_hash TEXT NOT NULL,
+    domain TEXT NOT NULL,
+    sender_email TEXT NOT NULL,
+    created_by TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    last_used_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_app_token_domain ON app_token(domain);

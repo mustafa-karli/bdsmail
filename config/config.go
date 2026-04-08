@@ -18,8 +18,7 @@ var (
 	FlagPOP3Port    = flag.Int("pop3_port", 110, "POP3 server port")
 	FlagIMAPPort    = flag.Int("imap_port", 143, "IMAP server port")
 	FlagHTTPPort    = flag.Int("http_port", 80, "HTTP port for ACME challenges")
-	FlagDBType      = flag.String("db_type", "postgres", "Database backend: postgres, sqlite, dynamodb, firestore")
-	FlagSQLitePath  = flag.String("sqlite_path", "/opt/bdsmail/bdsmail.db", "SQLite database file path")
+	FlagDBType      = flag.String("db_type", "postgres", "Database backend: postgres or dynamodb")
 	FlagDynamoDBRegion = flag.String("dynamodb_region", "us-east-1", "AWS region for DynamoDB")
 	FlagBucketType  = flag.String("bucket_type", "", "Object storage: gcs, s3, or empty (disabled)")
 	FlagGCSBucket   = flag.String("gcs_bucket", "", "GCS bucket name")
@@ -54,9 +53,7 @@ type Config struct {
 	RelayUser    string // loaded from secrets
 	RelayPassword string // loaded from secrets
 	DBType       string
-	SQLitePath   string
 	DynamoDBRegion     string
-	FirestoreProject   string
 	BucketType         string
 	S3Region           string
 	S3Bucket           string
@@ -92,9 +89,7 @@ func Load() *Config {
 		DKIMSelector: *FlagDKIMSelector,
 		AcmeWebroot:  *FlagAcmeWebroot,
 		DBType:       *FlagDBType,
-		SQLitePath:   *FlagSQLitePath,
 		DynamoDBRegion:     *FlagDynamoDBRegion,
-		FirestoreProject:   *common.ProjectID,
 		BucketType:         *FlagBucketType,
 		S3Region:           *FlagS3Region,
 		S3Bucket:           *FlagS3Bucket,

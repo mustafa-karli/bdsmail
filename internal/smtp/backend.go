@@ -13,6 +13,7 @@ import (
 
 	gosmtp "github.com/emersion/go-smtp"
 	"github.com/mustafakarli/bdsmail/config"
+	"github.com/mustafakarli/bdsmail/internal/cryptoutil"
 	"github.com/mustafakarli/bdsmail/internal/filter"
 	"github.com/mustafakarli/bdsmail/internal/mimeutil"
 	"github.com/mustafakarli/bdsmail/internal/model"
@@ -29,6 +30,25 @@ type Backend struct {
 
 func NewBackend(s *store.Store, checker *security.Checker, relay *Relay, cfg *config.Config) *Backend {
 	return &Backend{store: s, checker: checker, relay: relay, cfg: cfg}
+}
+
+// checkAppToken validates an app token (bds_ak_...) for SMTP AUTH.
+func (b *Backend) checkAppToken(senderEmail, password string) bool {
+	if !strings.HasPrefix(password, "bds_ak_") {
+		return false
+	}
+	tokens, err := b.store.DB.ListAllAppTokens()
+	if err != nil {
+		return false
+	}
+	bareToken := password[7:] // strip "bds_ak_" prefix
+	for _, t := range tokens {
+		if t.SenderEmail == senderEmail && cryptoutil.CheckSecret(t.TokenHash, bareToken) {
+			b.store.DB.UpdateTokenLastUsed(t.ID)
+			return true
+		}
+	}
+	return false
 }
 
 func (b *Backend) NewSession(c *gosmtp.Conn) (gosmtp.Session, error) {
@@ -82,12 +102,15 @@ func (s *Session) AuthPlain(username, password string) error {
 		}
 	}
 	if !user.CheckPassword(password) {
-		if s.backend.checker != nil {
-			s.backend.checker.RecordAuthResult(s.remoteIP, false)
-		}
-		return &gosmtp.SMTPError{
-			Code:    535,
-			Message: "Authentication failed",
+		// Fallback: check if password is an app token (bds_ak_...)
+		if !s.backend.checkAppToken(username, password) {
+			if s.backend.checker != nil {
+				s.backend.checker.RecordAuthResult(s.remoteIP, false)
+			}
+			return &gosmtp.SMTPError{
+				Code:    535,
+				Message: "Authentication failed",
+			}
 		}
 	}
 

@@ -1066,6 +1066,15 @@ func (db *DbDynamo) unmarshalContact(item map[string]types.AttributeValue) (*mod
 	return c, nil
 }
 
+// --- App token operations (stub for DynamoDB) ---
+
+func (db *DbDynamo) CreateAppToken(token *model.AppToken) error { return fmt.Errorf("not implemented for DynamoDB") }
+func (db *DbDynamo) ListAppTokens(domain string) ([]*model.AppToken, error) { return nil, nil }
+func (db *DbDynamo) GetAppTokenByID(id string) (*model.AppToken, error) { return nil, fmt.Errorf("not found") }
+func (db *DbDynamo) ListAllAppTokens() ([]*model.AppToken, error) { return nil, nil }
+func (db *DbDynamo) DeleteAppToken(id string) error { return nil }
+func (db *DbDynamo) UpdateTokenLastUsed(id string) error { return nil }
+
 func (db *DbDynamo) AddHistory(h *model.UserHistory) error { return nil }
 func (db *DbDynamo) GetHistory(email string) ([]*model.UserHistory, error) { return nil, nil }
 
