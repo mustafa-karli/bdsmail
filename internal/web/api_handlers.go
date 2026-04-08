@@ -60,9 +60,12 @@ func (a *APIHandlers) HandleAuthMe(w http.ResponseWriter, r *http.Request) {
 	if user, err := a.handlers.store.DB.GetUserByEmail(email); err == nil {
 		displayName = user.DisplayName
 	}
-	jsonOK(w, map[string]string{
+	jsonOK(w, map[string]any{
 		"username": username, "displayName": displayName,
 		"email": email, "domain": domain,
+		"isOwner": a.handlers.isOwner(email),
+		"isAdmin": a.handlers.isAdmin(email),
+		"isSuperAdmin": a.handlers.isSuperAdmin(email),
 	})
 }
 

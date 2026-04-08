@@ -3,6 +3,9 @@ export interface User {
   displayName: string
   email: string
   domain: string
+  isOwner: boolean
+  isAdmin: boolean
+  isSuperAdmin: boolean
 }
 
 export interface Attachment {

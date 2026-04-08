@@ -1,0 +1,73 @@
+{{define "title-domain_users"}}Users{{end}}
+{{define "content-domain_users"}}
+<div class="card">
+    <div class="toolbar">
+        <h2>Users — {{.Domain}}</h2>
+        <a href="/inbox" class="btn btn-sm btn-secondary">Back to Inbox</a>
+    </div>
+
+    {{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+    {{if .Success}}<div class="alert alert-success">{{.Success}}</div>{{end}}
+
+    <form method="POST" action="/settings/users" style="margin-top:16px;">
+        <input type="hidden" name="action" value="create">
+        <h3 style="color:#1976D2;margin-bottom:12px;">Add User</h3>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;">
+            <div style="flex:1;"><label>Username</label><input type="text" name="username" placeholder="john" required>
+                <p style="font-size:0.8em;color:#888;">username@{{.Domain}}</p></div>
+            <div style="flex:1;"><label>Display Name</label><input type="text" name="display_name" placeholder="John Smith"></div>
+            <div style="flex:1;"><label>Password</label><input type="password" name="password" required minlength="8"></div>
+            <div><label>Role</label>
+                <select name="role">
+                    <option value="user">User</option>
+                    <option value="admin">Admin</option>
+                    {{if eq .OAuthNonce "owner"}}<option value="owner">Owner</option>{{end}}
+                </select>
+            </div>
+            <button type="submit" class="btn" style="height:42px;">Add</button>
+        </div>
+    </form>
+
+    <h3 style="color:#1976D2;margin-top:24px;margin-bottom:12px;">Domain Users</h3>
+    <table class="message-list">
+        <thead><tr><th>Email</th><th>Display Name</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody>
+            {{range .AdminData}}
+            <tr>
+                <td>{{.Email}}</td>
+                <td>{{.DisplayName}}</td>
+                <td>{{.Role}}</td>
+                <td>{{.Status}}</td>
+                <td style="display:flex;gap:4px;">
+                    {{if ne .Role "owner"}}
+                    <form method="POST" action="/settings/users" style="display:inline;">
+                        <input type="hidden" name="action" value="delete">
+                        <input type="hidden" name="email" value="{{.Email}}">
+                        <button type="submit" class="btn btn-sm btn-secondary">Delete</button>
+                    </form>
+                    {{end}}
+                </td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+
+    {{if .DNSRecords}}
+    <h3 style="color:#1976D2;margin-top:24px;margin-bottom:12px;">DNS Records</h3>
+    <p style="color:#666;margin-bottom:12px;font-size:0.9em;">These records should be configured in your DNS provider.</p>
+    <table class="message-list">
+        <thead><tr><th>Type</th><th>Name</th><th>Value</th><th>Priority</th></tr></thead>
+        <tbody>
+            {{range .DNSRecords}}
+            <tr>
+                <td><strong>{{.RecordType}}</strong></td>
+                <td>{{.Name}}</td>
+                <td style="word-break:break-all;max-width:400px;font-size:0.85em;">{{.Value}}</td>
+                <td>{{.Priority}}</td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+    {{end}}
+</div>
+{{end}}

@@ -67,7 +67,11 @@ type pageData struct {
 	OAuthState       string
 	OAuthNonce       string
 	NewClient        *oauth.NewClientResponse
+	DNSRecords       []*model.DomainDNSRecord
 	AdminData        any // admin page-specific data (domains, users, aliases, lists)
+	IsOwner          bool
+	IsAdmin          bool
+	IsSuperAdmin     bool
 }
 
 type contactView struct {
@@ -99,11 +103,14 @@ func (h *Handlers) userPageData(email string) pageData {
 	}
 	unread := h.store.DB.CountUnread(email, "INBOX")
 	return pageData{
-		Username:    username,
-		DisplayName: displayName,
-		Email:       email,
-		Domain:      domain,
-		UnreadCount: unread,
+		Username:     username,
+		DisplayName:  displayName,
+		Email:        email,
+		Domain:       domain,
+		UnreadCount:  unread,
+		IsOwner:      h.isOwner(email),
+		IsAdmin:      h.isAdmin(email),
+		IsSuperAdmin: h.isSuperAdmin(email),
 	}
 }
 

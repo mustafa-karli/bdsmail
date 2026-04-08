@@ -155,6 +155,10 @@ Choose one:
 ssh bdsmail
 sudo -i
 
+# Disable Debian's default mail server (conflicts with port 25)
+systemctl stop exim4
+systemctl disable exim4
+
 # Create service user
 groupadd bdsmail
 useradd -r -g bdsmail -d /opt/bdsmail -s /usr/sbin/nologin bdsmail
@@ -316,9 +320,23 @@ systemctl status bdsmail
 journalctl -u bdsmail -f
 ```
 
-### Step 8: Bootstrap First Domain
+### Step 8: Configure AWS Credentials on Server
 
-The first domain must be set up manually. Subsequent domains use the admin panel.
+The server needs AWS credentials for S3 backups and SES. Use the same credentials from your dev machine (`cat ~/.aws/credentials`):
+
+```bash
+ssh bdsmail
+sudo -i
+aws configure
+# Enter: Access Key ID, Secret Access Key, Region (us-west-2), Output (json)
+
+# Verify
+aws s3 ls s3://bdsmail-<your-account-id>/
+```
+
+### Step 9: Bootstrap First Domain
+
+The first domain must be set up manually. Subsequent domains use the self-service signup at `/signup`.
 
 ```bash
 ssh bdsmail
@@ -354,26 +372,71 @@ openssl genrsa -out /opt/bdsmail/dkim/yourdomain.com.pem 2048
 chmod 600 /opt/bdsmail/dkim/yourdomain.com.pem
 chown bdsmail:bdsmail /opt/bdsmail/dkim/yourdomain.com.pem
 
-# Print DKIM public key for DNS
+# Print DKIM public key for DNS — add as TXT record:
+# Name: default._domainkey   Value: v=DKIM1; k=rsa; p=<output below>
 openssl rsa -in /opt/bdsmail/dkim/yourdomain.com.pem -pubout -outform DER | openssl base64 -A
 echo ""
-# Add this as TXT record: default._domainkey.yourdomain.com → v=DKIM1; k=rsa; p=<output>
 
 # Start bdsmail
 systemctl start bdsmail
 journalctl -u bdsmail -n 10
-
-# Create first user
-/opt/bdsmail/bin/bdsmail -adduser admin@yourdomain.com -password 'your-password' -displayname 'Admin'
 ```
 
-Verify: open `https://mail.yourdomain.com` — you should see the login page.
-
-### Step 9: Set Up Certificate Renewal
+#### Create First User
 
 ```bash
-# Add daily cron at 2 AM for cert renewal
-echo "0 2 * * * /opt/bdsmail/scripts/renew_certs.sh /opt/bdsmail/ssl >> /var/log/bdsmail-certs.log 2>&1" | crontab -
+# Generate bcrypt hash for password
+apt-get install -y python3-bcrypt
+python3 -c "import bcrypt; print(bcrypt.hashpw(b'YOUR_PASSWORD', bcrypt.gensalt()).decode())"
+
+# Insert user (replace HASH with the output above)
+psql -h localhost -U bdsmail -d bdsmail << SQL
+INSERT INTO user_account (id, username, domain, display_name, password_hash, status)
+VALUES ('admin@yourdomain.com', 'admin', 'yourdomain.com', 'Admin', 'PASTE_HASH_HERE', 'A');
+
+INSERT INTO user_permission (id, user_email, role, domain, end_date, created_by)
+VALUES ('perm_owner_1', 'admin@yourdomain.com', 'owner', 'yourdomain.com', '2099-12-31 23:59:59+00', 'admin@yourdomain.com');
+SQL
+```
+
+Verify: open `https://mail.yourdomain.com` — login with `admin` and your password.
+
+#### Password Reset
+
+If you need to reset a password later:
+
+```bash
+# Generate new hash
+python3 -c "import bcrypt; print(bcrypt.hashpw(b'NEW_PASSWORD', bcrypt.gensalt()).decode())"
+
+# Update
+psql -h localhost -U bdsmail -d bdsmail -c "UPDATE user_account SET password_hash = 'NEW_HASH' WHERE id = 'user@domain.com';"
+```
+
+### Step 10: Set Up Cron Jobs
+
+```bash
+ssh bdsmail
+sudo -i
+
+# Install cron (if not already installed)
+apt-get install -y cron
+systemctl enable cron && systemctl start cron
+
+# Certificate renewal — daily at 2 AM
+# Only copies + restarts if certs actually renewed
+echo "0 2 * * * /opt/bdsmail/scripts/renew_certs.sh /opt/bdsmail/ssl >> /var/log/bdsmail-certs.log 2>&1" >> /var/spool/cron/crontabs/root
+
+# Database backup to S3 — daily at 3 AM
+# Keeps 7 local + 30 days on S3
+echo "0 3 * * * /opt/bdsmail/scripts/backup.sh bdsmail-<your-account-id> >> /var/log/bdsmail-backup.log 2>&1" >> /var/spool/cron/crontabs/root
+
+# Verify
+crontab -l
+
+# Test backup manually
+/opt/bdsmail/scripts/backup.sh bdsmail-<your-account-id>
+aws s3 ls s3://bdsmail-<your-account-id>/db/
 ```
 
 ---

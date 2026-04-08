@@ -15,10 +15,38 @@ import (
 type Store struct {
 	DB     Database
 	Bucket ObjectStore // optional, for attachments
+	cfg    DomainRefresher
+}
+
+// DomainRefresher is implemented by config.Config to reload domains from DB.
+type DomainRefresher interface {
+	LoadDomainsFromDB(names []string)
 }
 
 func NewStore(db Database, bucket ObjectStore) *Store {
 	return &Store{DB: db, Bucket: bucket}
+}
+
+// SetDomainRefresher sets the config reference for domain list refresh.
+func (s *Store) SetDomainRefresher(cfg DomainRefresher) {
+	s.cfg = cfg
+}
+
+// RefreshDomains reloads the domain list from the database into config.
+func (s *Store) RefreshDomains() {
+	if s.cfg == nil {
+		return
+	}
+	domains, err := s.DB.ListDomains()
+	if err != nil {
+		log.Printf("warning: failed to refresh domains: %v", err)
+		return
+	}
+	var names []string
+	for _, d := range domains {
+		names = append(names, d.Name)
+	}
+	s.cfg.LoadDomainsFromDB(names)
 }
 
 // newMessage creates a Message with common fields populated.

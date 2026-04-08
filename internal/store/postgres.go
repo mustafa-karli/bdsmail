@@ -95,6 +95,17 @@ func pgsqlQueries() map[string]string {
 		QUpdateContact: `UPDATE user_contact SET vcard_data = $1, etag = $2, updated_at = NOW() WHERE id = $3`,
 		QDeleteContact: `DELETE FROM user_contact WHERE id = $1`,
 
+		// Domain DNS
+		QSaveDNSRecord:    `INSERT INTO domain_dns (domain, record_type, name, value, priority) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (domain, record_type, name) DO UPDATE SET value = EXCLUDED.value, priority = EXCLUDED.priority`,
+		QListDNSRecords:   `SELECT domain, record_type, name, value, priority, created_at FROM domain_dns WHERE domain = $1 ORDER BY record_type, name`,
+		QDeleteDNSRecords: `DELETE FROM domain_dns WHERE domain = $1`,
+
+		// Permissions
+		QGrantPermission:  `INSERT INTO user_permission (id, user_email, role, domain, start_date, end_date, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		QRevokePermission: `DELETE FROM user_permission WHERE id = $1`,
+		QGetPermissions:   `SELECT id, user_email, role, domain, start_date, end_date, created_by, created_at FROM user_permission WHERE user_email = $1 AND start_date <= NOW() AND end_date >= NOW() ORDER BY role`,
+		QHasPermission:    `SELECT COUNT(*) FROM user_permission WHERE user_email = $1 AND role = $2 AND start_date <= NOW() AND end_date >= NOW()`,
+
 		// Signup
 		QCreateSignup: `INSERT INTO domain_signup (id, domain, username, display_name, password_hash, status, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 		QGetSignup:    `SELECT id, domain, username, display_name, password_hash, status, created_at, expires_at FROM domain_signup WHERE id = $1`,

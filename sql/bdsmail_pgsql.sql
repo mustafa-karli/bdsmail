@@ -185,3 +185,26 @@ CREATE TABLE IF NOT EXISTS domain_signup (
     created_at TIMESTAMPTZ DEFAULT NOW(),
     expires_at TIMESTAMPTZ NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS user_permission (
+    id TEXT PRIMARY KEY,
+    user_email TEXT NOT NULL,
+    role TEXT NOT NULL,
+    domain TEXT NOT NULL,
+    start_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    end_date TIMESTAMPTZ NOT NULL DEFAULT '2099-12-31 23:59:59+00',
+    created_by TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_permission_user ON user_permission(user_email);
+CREATE INDEX IF NOT EXISTS idx_permission_domain ON user_permission(domain);
+
+CREATE TABLE IF NOT EXISTS domain_dns (
+    domain TEXT NOT NULL,
+    record_type TEXT NOT NULL,
+    name TEXT NOT NULL,
+    value TEXT NOT NULL,
+    priority TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (domain, record_type, name)
+);

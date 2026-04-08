@@ -213,6 +213,8 @@ erDiagram
     user_account ||--o{ mail_filter : "user_email"
     mail_content ||--o{ mail_attachment: "mail_attachments"
     user_account ||--o{ mail_content : "owner_user"
+    user_permission }o--|| user_account : "user_email"
+    domain_dns }o--|| domain : "domain"
     user_trusted_device }o--|| user_account : "user_email"
     user_otp }o--|| user_account : "user_email"
     login_token }o--|| user_account : "user_email"
@@ -333,6 +335,26 @@ erDiagram
         TEXT token PK
         TEXT user_email FK
         TIMESTAMPTZ expires_at
+    }
+
+    user_permission {
+        TEXT id PK
+        TEXT user_email FK
+        TEXT role
+        TEXT domain FK
+        TIMESTAMPTZ start_date
+        TIMESTAMPTZ end_date
+        TEXT created_by
+        TIMESTAMPTZ created_at
+    }
+
+    domain_dns {
+        TEXT domain PK
+        TEXT record_type PK
+        TEXT name PK
+        TEXT value
+        TEXT priority
+        TIMESTAMPTZ created_at
     }
 
     oauth_code {

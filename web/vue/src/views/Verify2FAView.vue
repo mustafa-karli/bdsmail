@@ -40,6 +40,7 @@ async function submit() {
 <template>
   <div class="login-container">
     <div class="card">
+      <img src="/static/bdsmail_logo1.png" alt="BDS Mail" style="width:80px;margin-bottom:12px">
       <h2>Two-Factor Authentication</h2>
       <p style="color:#666;margin-bottom:16px">Enter your authenticator code or a backup code.</p>
       <AlertBanner :error="error" />

@@ -183,6 +183,19 @@ func (s *Server) Start() error {
 		s.handlers.HandleFolder(w, r, s.renderer("inbox"))
 	})
 
+	// Super admin (platform domain only)
+	mux.HandleFunc("/superadmin", func(w http.ResponseWriter, r *http.Request) {
+		s.handlers.HandleSuperAdmin(w, r, s.renderer("superadmin"))
+	})
+	mux.HandleFunc("/api/superadmin/domains", s.handlers.APISuperAdminDomains)
+	mux.HandleFunc("/api/superadmin/users", s.handlers.APISuperAdminUsers)
+
+	// Domain user management (owner/admin only)
+	mux.HandleFunc("/settings/users", func(w http.ResponseWriter, r *http.Request) {
+		s.handlers.HandleDomainUsers(w, r, s.renderer("domain_users"))
+	})
+	mux.HandleFunc("/api/domain/users", s.handlers.APIDomainUsers)
+
 	// 2FA
 	twoFA := NewTwoFAHandlers(s.handlers, s.handlers.authService)
 	mux.HandleFunc("/verify-2fa", func(w http.ResponseWriter, r *http.Request) {

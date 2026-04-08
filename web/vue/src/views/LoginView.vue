@@ -24,6 +24,7 @@ async function submit() {
 <template>
   <div class="login-container">
     <div class="card">
+      <img src="/static/bdsmail_logo1.png" alt="BDS Mail" style="width:80px;margin-bottom:12px">
       <h2>BDS Mail</h2>
       <p>Sign in to your account</p>
       <AlertBanner :error="error" />

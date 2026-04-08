@@ -145,7 +145,7 @@ func (c *Config) HostToDomain(host string) string {
 			return d
 		}
 	}
-	for _, prefix := range []string{"mail.", "webmail."} {
+	for _, prefix := range []string{"mail.", "webmail.", "mailsrv."} {
 		if len(host) > len(prefix) && host[:len(prefix)] == prefix {
 			candidate := host[len(prefix):]
 			for _, d := range c.Domains {

@@ -870,6 +870,23 @@ func (db *DbFirestore) DeleteContact(id string) error {
 	return err
 }
 
+// --- Domain DNS operations (stub for Firestore) ---
+
+func (db *DbFirestore) SaveDNSRecord(record *model.DomainDNSRecord) error { return nil }
+func (db *DbFirestore) ListDNSRecords(domain string) ([]*model.DomainDNSRecord, error) { return nil, nil }
+func (db *DbFirestore) DeleteDNSRecords(domain string) error { return nil }
+
+// --- Permission operations (stub for Firestore) ---
+
+func (db *DbFirestore) GrantPermission(perm *model.UserPermission) error {
+	return fmt.Errorf("permissions not yet implemented for Firestore")
+}
+func (db *DbFirestore) RevokePermission(id string) error { return nil }
+func (db *DbFirestore) GetUserPermissions(email string) ([]*model.UserPermission, error) {
+	return nil, nil
+}
+func (db *DbFirestore) HasPermission(email, role string) (bool, error) { return false, nil }
+
 // --- Signup operations (stub for Firestore) ---
 
 func (db *DbFirestore) CreateSignup(signup *model.DomainSignup) error {

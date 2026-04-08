@@ -1066,6 +1066,23 @@ func (db *DbDynamo) unmarshalContact(item map[string]types.AttributeValue) (*mod
 	return c, nil
 }
 
+// --- Domain DNS operations (stub for DynamoDB) ---
+
+func (db *DbDynamo) SaveDNSRecord(record *model.DomainDNSRecord) error { return nil }
+func (db *DbDynamo) ListDNSRecords(domain string) ([]*model.DomainDNSRecord, error) { return nil, nil }
+func (db *DbDynamo) DeleteDNSRecords(domain string) error { return nil }
+
+// --- Permission operations (stub for DynamoDB) ---
+
+func (db *DbDynamo) GrantPermission(perm *model.UserPermission) error {
+	return fmt.Errorf("permissions not yet implemented for DynamoDB")
+}
+func (db *DbDynamo) RevokePermission(id string) error { return nil }
+func (db *DbDynamo) GetUserPermissions(email string) ([]*model.UserPermission, error) {
+	return nil, nil
+}
+func (db *DbDynamo) HasPermission(email, role string) (bool, error) { return false, nil }
+
 // --- Signup operations (stub for DynamoDB) ---
 
 func (db *DbDynamo) CreateSignup(signup *model.DomainSignup) error {

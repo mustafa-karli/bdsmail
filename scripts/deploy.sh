@@ -13,15 +13,22 @@ HOST="bdsmail"
 REMOTE="/opt/bdsmail"
 TARGET="${1:-all}"
 
+# Stop service before uploading binary (OS locks running binary)
+stop_service() {
+    ssh ${HOST} "sudo systemctl stop bdsmail 2>/dev/null || true"
+}
+
 # Fix permissions and restart service
 fix_and_restart() {
-    ssh ${HOST} "sudo chown -R bdsmail:bdsmail ${REMOTE} && sudo chmod -R g+w ${REMOTE} && sudo chmod 600 ${REMOTE}/sec/secrets.json && sudo systemctl restart bdsmail"
+    ssh ${HOST} "sudo chown -R bdsmail:bdsmail ${REMOTE} && sudo chmod -R g+w ${REMOTE} && sudo chmod 600 ${REMOTE}/sec/secrets.json && sudo systemctl start bdsmail"
 }
 
 case "$TARGET" in
   bin)
     echo "=== Building Go binary ==="
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/bdsmail ./cmd/bdsmail/
+    echo "=== Stopping service ==="
+    stop_service
     echo "=== Uploading binary ==="
     scp bin/bdsmail ${HOST}:${REMOTE}/bin/
     echo "=== Restarting service ==="
@@ -40,7 +47,7 @@ case "$TARGET" in
     echo "=== Building Vue SPA ==="
     cd web/vue && npm run build && cd ../..
     echo "=== Uploading dist ==="
-    scp -r web/vue/dist/* ${HOST}:${REMOTE}/web/vue/dist/
+    scp -r -O web/vue/dist/* ${HOST}:${REMOTE}/web/vue/dist/
     ssh ${HOST} "sudo chown -R bdsmail:bdsmail ${REMOTE}/web/vue"
     echo "=== Done (no restart needed for static files) ==="
     ;;
@@ -50,11 +57,13 @@ case "$TARGET" in
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/bdsmail ./cmd/bdsmail/
     echo "=== Building Vue SPA ==="
     cd web/vue && npm run build && cd ../..
+    echo "=== Stopping service ==="
+    stop_service
     echo "=== Uploading everything ==="
     scp bin/bdsmail ${HOST}:${REMOTE}/bin/
     scp web/templates/* ${HOST}:${REMOTE}/web/templates/
     scp web/static/* ${HOST}:${REMOTE}/web/static/
-    scp -r web/vue/dist/* ${HOST}:${REMOTE}/web/vue/dist/
+    scp -r -O web/vue/dist/* ${HOST}:${REMOTE}/web/vue/dist/
     scp scripts/*.sh scripts/*.service ${HOST}:${REMOTE}/scripts/
     scp sql/*.sql sql/*.md ${HOST}:${REMOTE}/sql/
     echo "=== Fixing permissions and restarting ==="

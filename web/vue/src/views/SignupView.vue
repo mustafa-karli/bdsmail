@@ -60,6 +60,7 @@ async function verifyDns() {
   <div style="max-width:600px;margin:40px auto">
     <!-- Step 1: Signup Form -->
     <div v-if="step === 1" class="card">
+      <img src="/static/bdsmail_logo1.png" alt="BDS Mail" style="width:80px;margin-bottom:12px">
       <h2>Register Your Domain</h2>
       <p style="color:#666;margin-bottom:16px">Get your own email server in minutes.</p>
       <AlertBanner :error="error" />

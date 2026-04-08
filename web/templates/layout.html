@@ -11,7 +11,7 @@
     {{if .Email}}{{if ne .Email "admin"}}
     <nav>
         <div class="container">
-            <a href="/inbox" class="brand">BDS Mail</a>
+            <a href="/inbox" class="brand"><img src="/static/bdsmail_logo1.png" alt="BDS Mail" style="height:32px;vertical-align:middle;margin-right:6px;">BDS Mail</a>
             <div class="nav-links">
                 <a href="/inbox">Inbox{{if .UnreadCount}} <span class="badge">{{.UnreadCount}}</span>{{end}}</a>
                 <a href="/compose">Compose</a>
@@ -19,7 +19,9 @@
                 <a href="/filters">Filters</a>
                 <a href="/settings/autoreply">Auto-Reply</a>
                 <a href="/settings/2fa">2FA</a>
-                <a href="/developer">Developer</a>
+                {{if .IsAdmin}}<a href="/settings/users">Users</a>{{end}}
+                {{if .IsAdmin}}<a href="/developer">Developer</a>{{end}}
+                {{if .IsSuperAdmin}}<a href="/superadmin">Platform</a>{{end}}
                 <span class="user-info">{{if .DisplayName}}{{.DisplayName}}{{else}}{{.Email}}{{end}}</span>
                 <form action="/logout" method="POST" style="display:inline;">
                     <button type="submit" class="btn btn-sm btn-secondary">Logout</button>

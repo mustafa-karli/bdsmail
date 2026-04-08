@@ -116,6 +116,11 @@ func main() {
 	// Create store facade
 	s := store.NewStore(db, bucket)
 
+	// Load domains from database and wire up auto-refresh
+	s.SetDomainRefresher(cfg)
+	s.RefreshDomains()
+	log.Printf("Loaded %d domain(s) from database", len(cfg.GetDomains()))
+
 	// Load DKIM keys
 	dkimKeys := loadDKIMKeys(cfg.DKIMKeyDir)
 

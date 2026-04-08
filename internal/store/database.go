@@ -81,6 +81,17 @@ const (
 	QGetAttachment        = "get_attachment"
 	QDeleteAttachmentsByMsg = "delete_attachments_by_msg"
 
+	// Domain DNS
+	QSaveDNSRecord    = "save_dns_record"
+	QListDNSRecords   = "list_dns_records"
+	QDeleteDNSRecords = "delete_dns_records"
+
+	// Permissions
+	QGrantPermission   = "grant_permission"
+	QRevokePermission  = "revoke_permission"
+	QGetPermissions    = "get_permissions"
+	QHasPermission     = "has_permission"
+
 	// Signup
 	QCreateSignup = "create_signup"
 	QGetSignup    = "get_signup"
@@ -195,6 +206,19 @@ type ContactStore interface {
 	DeleteContact(id string) error
 }
 
+type DomainDNSStore interface {
+	SaveDNSRecord(record *model.DomainDNSRecord) error
+	ListDNSRecords(domain string) ([]*model.DomainDNSRecord, error)
+	DeleteDNSRecords(domain string) error
+}
+
+type PermissionStore interface {
+	GrantPermission(perm *model.UserPermission) error
+	RevokePermission(id string) error
+	GetUserPermissions(email string) ([]*model.UserPermission, error)
+	HasPermission(email, role string) (bool, error)
+}
+
 type SignupStore interface {
 	CreateSignup(signup *model.DomainSignup) error
 	GetSignup(id string) (*model.DomainSignup, error)
@@ -258,6 +282,8 @@ type Database interface {
 	FilterStore
 	AutoReplyStore
 	ContactStore
+	DomainDNSStore
+	PermissionStore
 	SignupStore
 	AttachmentStore
 	AuthStore
@@ -580,9 +606,81 @@ func (db *DbSQL) ListUsersByDomain(domain string) ([]*model.User, error) {
 
 func (db *DbSQL) UpdateUser(email, displayName, passwordHash string) error {
 	username, domain := SplitEmail(email)
-	// QUpdateUser always sets both display_name and password_hash
 	_, err := db.Conn.Exec(db.Queries[QUpdateUser], displayName, passwordHash, username, domain)
 	return err
+}
+
+// --- Domain DNS operations ---
+
+func (db *DbSQL) SaveDNSRecord(record *model.DomainDNSRecord) error {
+	_, err := db.Conn.Exec(db.Queries[QSaveDNSRecord],
+		record.Domain, record.RecordType, record.Name, record.Value, record.Priority)
+	return err
+}
+
+func (db *DbSQL) ListDNSRecords(domain string) ([]*model.DomainDNSRecord, error) {
+	rows, err := db.Conn.Query(db.Queries[QListDNSRecords], domain)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var records []*model.DomainDNSRecord
+	for rows.Next() {
+		r := &model.DomainDNSRecord{}
+		var createdAt interface{}
+		if err := rows.Scan(&r.Domain, &r.RecordType, &r.Name, &r.Value, &r.Priority, &createdAt); err != nil {
+			return nil, err
+		}
+		r.CreatedAt = scanTime(createdAt)
+		records = append(records, r)
+	}
+	return records, nil
+}
+
+func (db *DbSQL) DeleteDNSRecords(domain string) error {
+	_, err := db.Conn.Exec(db.Queries[QDeleteDNSRecords], domain)
+	return err
+}
+
+// --- Permission operations ---
+
+func (db *DbSQL) GrantPermission(perm *model.UserPermission) error {
+	_, err := db.Conn.Exec(db.Queries[QGrantPermission],
+		perm.ID, perm.UserEmail, perm.Role, perm.Domain,
+		db.FormatTime(perm.StartDate), db.FormatTime(perm.EndDate), perm.CreatedBy)
+	return err
+}
+
+func (db *DbSQL) RevokePermission(id string) error {
+	_, err := db.Conn.Exec(db.Queries[QRevokePermission], id)
+	return err
+}
+
+func (db *DbSQL) GetUserPermissions(email string) ([]*model.UserPermission, error) {
+	rows, err := db.Conn.Query(db.Queries[QGetPermissions], email)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var perms []*model.UserPermission
+	for rows.Next() {
+		p := &model.UserPermission{}
+		var startDate, endDate, createdAt interface{}
+		if err := rows.Scan(&p.ID, &p.UserEmail, &p.Role, &p.Domain, &startDate, &endDate, &p.CreatedBy, &createdAt); err != nil {
+			return nil, err
+		}
+		p.StartDate = scanTime(startDate)
+		p.EndDate = scanTime(endDate)
+		p.CreatedAt = scanTime(createdAt)
+		perms = append(perms, p)
+	}
+	return perms, nil
+}
+
+func (db *DbSQL) HasPermission(email, role string) (bool, error) {
+	var count int
+	err := db.Conn.QueryRow(db.Queries[QHasPermission], email, role).Scan(&count)
+	return count > 0, err
 }
 
 func (db *DbSQL) DeleteUser(email string) error {

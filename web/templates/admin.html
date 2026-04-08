@@ -3,6 +3,7 @@
 {{if .Error}}
 <div class="login-container">
     <div class="card">
+        <img src="/static/bdsmail_logo1.png" alt="BDS Mail" style="width:60px;margin-bottom:8px;">
         <h2>Admin Access</h2>
         <p>Enter admin secret to continue</p>
         {{if .Error}}
@@ -21,6 +22,7 @@
 {{else if not .Email}}
 <div class="login-container">
     <div class="card">
+        <img src="/static/bdsmail_logo1.png" alt="BDS Mail" style="width:60px;margin-bottom:8px;">
         <h2>Admin Access</h2>
         <p>Enter admin secret to continue</p>
         <form method="POST" action="/admin/domains">

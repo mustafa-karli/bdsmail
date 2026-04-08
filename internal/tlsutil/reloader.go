@@ -94,7 +94,7 @@ func (cs *CertStore) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificat
 	}
 
 	// Strip known prefixes: mail.domain.com → domain.com
-	for _, prefix := range []string{"mail.", "webmail."} {
+	for _, prefix := range []string{"mail.", "webmail.", "mailsrv."} {
 		if strings.HasPrefix(serverName, prefix) {
 			domain := serverName[len(prefix):]
 			if cert, ok := cs.certs[domain]; ok {

@@ -100,6 +100,17 @@ func sqliteQueries() map[string]string {
 		QUpdateContact: `UPDATE user_contact SET vcard_data = ?, etag = ?, updated_at = datetime('now') WHERE id = ?`,
 		QDeleteContact: `DELETE FROM user_contact WHERE id = ?`,
 
+		// Domain DNS
+		QSaveDNSRecord:    `INSERT OR REPLACE INTO domain_dns (domain, record_type, name, value, priority) VALUES (?, ?, ?, ?, ?)`,
+		QListDNSRecords:   `SELECT domain, record_type, name, value, priority, created_at FROM domain_dns WHERE domain = ? ORDER BY record_type, name`,
+		QDeleteDNSRecords: `DELETE FROM domain_dns WHERE domain = ?`,
+
+		// Permissions
+		QGrantPermission:  `INSERT INTO user_permission (id, user_email, role, domain, start_date, end_date, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		QRevokePermission: `DELETE FROM user_permission WHERE id = ?`,
+		QGetPermissions:   `SELECT id, user_email, role, domain, start_date, end_date, created_by, created_at FROM user_permission WHERE user_email = ? AND start_date <= datetime('now') AND end_date >= datetime('now') ORDER BY role`,
+		QHasPermission:    `SELECT COUNT(*) FROM user_permission WHERE user_email = ? AND role = ? AND start_date <= datetime('now') AND end_date >= datetime('now')`,
+
 		// Signup
 		QCreateSignup: `INSERT INTO domain_signup (id, domain, username, display_name, password_hash, status, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		QGetSignup:    `SELECT id, domain, username, display_name, password_hash, status, created_at, expires_at FROM domain_signup WHERE id = ?`,

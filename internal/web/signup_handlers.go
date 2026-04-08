@@ -26,8 +26,22 @@ func NewSignupHandlers(h *Handlers) *SignupHandlers {
 
 // --- Go Template Handlers ---
 
+// isPlatformDomain checks if the request is coming to the platform domain.
+func (s *SignupHandlers) isPlatformDomain(r *http.Request) bool {
+	host := r.Host
+	if idx := strings.Index(host, ":"); idx != -1 {
+		host = host[:idx]
+	}
+	return host == s.handlers.cfg.MailHostname
+}
+
 // HandleSignup renders the signup form (GET) or creates a pending signup (POST).
 func (s *SignupHandlers) HandleSignup(w http.ResponseWriter, r *http.Request, tmpl templateRenderer) {
+	if !s.isPlatformDomain(r) {
+		http.Error(w, "Signup is only available at "+s.handlers.cfg.MailHostname, http.StatusForbidden)
+		return
+	}
+
 	if r.Method == http.MethodGet {
 		tmpl.render(w, "layout", pageData{Domain: s.handlers.cfg.MailHostname})
 		return
@@ -49,6 +63,11 @@ func (s *SignupHandlers) HandleSignup(w http.ResponseWriter, r *http.Request, tm
 
 // HandleSignupVerify shows DNS records and verifies them.
 func (s *SignupHandlers) HandleSignupVerify(w http.ResponseWriter, r *http.Request, tmpl templateRenderer) {
+	if !s.isPlatformDomain(r) {
+		http.Error(w, "Signup is only available at "+s.handlers.cfg.MailHostname, http.StatusForbidden)
+		return
+	}
+
 	signupID := r.URL.Query().Get("id")
 	if signupID == "" {
 		http.Redirect(w, r, "/signup", http.StatusSeeOther)
@@ -105,6 +124,10 @@ func (s *SignupHandlers) HandleSignupVerify(w http.ResponseWriter, r *http.Reque
 // --- JSON API Handlers ---
 
 func (s *SignupHandlers) APICreateSignup(w http.ResponseWriter, r *http.Request) {
+	if !s.isPlatformDomain(r) {
+		jsonError(w, 403, "Signup is only available at "+s.handlers.cfg.MailHostname)
+		return
+	}
 	var body struct {
 		Domain      string `json:"domain"`
 		Username    string `json:"username"`
@@ -220,42 +243,57 @@ func (s *SignupHandlers) createSignup(domain, username, displayName, password st
 
 func (s *SignupHandlers) provisionDomain(signup *model.DomainSignup) (*admin.DomainResult, error) {
 	cfg := s.handlers.cfg
-	relay := s.handlers.relay
+	email := signup.Username + "@" + signup.Domain
 
-	// Get certStore from the server (it's on the Handlers' parent)
-	// For now, pass nil — cert issuance handled separately
-	result, err := admin.RegisterDomain(cfg, relay, nil, signup.Domain)
-	if err != nil {
-		return nil, err
+	// Create domain in DB (skip if already exists from a previous partial attempt)
+	existing, _ := s.handlers.store.DB.GetDomain(signup.Domain)
+	if existing == nil {
+		apiKey := cryptoutil.MustRandomHex(32)
+		apiKeyHash, _ := cryptoutil.HashSecret(apiKey)
+		if err := s.handlers.store.DB.CreateDomain(&model.Domain{
+			Name:       signup.Domain,
+			APIKeyHash: apiKeyHash,
+			Status:     "active",
+			CreatedBy:  email,
+		}); err != nil {
+			return nil, fmt.Errorf("create domain: %w", err)
+		}
 	}
 
-	// Create domain in DB
-	apiKeyHash, _ := cryptoutil.HashSecret(result.DomainAPIKey)
-	if err := s.handlers.store.DB.CreateDomain(&model.Domain{
-		Name:       signup.Domain,
-		APIKeyHash: apiKeyHash,
-		SESStatus:  result.SESStatus,
-		Status:     "active",
-		CreatedBy:  signup.Username + "@" + signup.Domain,
-	}); err != nil {
-		return nil, fmt.Errorf("create domain: %w", err)
+	// Create user account as domain owner (skip if already exists)
+	if !s.handlers.store.DB.UserExistsByEmail(email) {
+		if err := s.handlers.store.DB.CreateUser(
+			signup.Username, signup.Domain, signup.DisplayName, signup.PasswordHash,
+		); err != nil {
+			return nil, fmt.Errorf("create user: %w", err)
+		}
+		s.handlers.grantPermission(email, "owner", signup.Domain, email, time.Time{})
 	}
 
-	// Create user account
-	if err := s.handlers.store.DB.CreateUser(
-		signup.Username, signup.Domain, signup.DisplayName, signup.PasswordHash,
-	); err != nil {
-		return nil, fmt.Errorf("create user: %w", err)
-	}
+	// Refresh domain list from DB
+	s.handlers.store.RefreshDomains()
 
-	// Add domain to running config
-	cfg.AddDomain(signup.Domain)
+	// Build and persist DNS records
+	records := s.buildSignupDNSRecords(signup.Domain, cfg.MailHostname)
+	for _, r := range records {
+		s.handlers.store.DB.SaveDNSRecord(&model.DomainDNSRecord{
+			Domain:     signup.Domain,
+			RecordType: r.Type,
+			Name:       r.Name,
+			Value:      r.Value,
+			Priority:   r.Priority,
+		})
+	}
 
 	// Clean up signup record
 	s.handlers.store.DB.DeleteSignup(signup.ID)
 
-	log.Printf("Domain %s provisioned via self-service signup by %s@%s", signup.Domain, signup.Username, signup.Domain)
-	return result, nil
+	log.Printf("Domain %s provisioned via self-service signup by %s", signup.Domain, email)
+	return &admin.DomainResult{
+		Domain:     signup.Domain,
+		DNSRecords: records,
+		Message:    fmt.Sprintf("Domain %s registered successfully.", signup.Domain),
+	}, nil
 }
 
 func (s *SignupHandlers) buildSignupDNSRecords(domain, mailHostname string) []admin.DNSRecord {
