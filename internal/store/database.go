@@ -86,6 +86,11 @@ const (
 	QListDNSRecords   = "list_dns_records"
 	QDeleteDNSRecords = "delete_dns_records"
 
+	// User status + history
+	QUpdateUserStatus = "update_user_status"
+	QAddHistory       = "add_history"
+	QGetHistory       = "get_history"
+
 	// Permissions
 	QGrantPermission   = "grant_permission"
 	QRevokePermission  = "revoke_permission"
@@ -146,6 +151,7 @@ type UserStore interface {
 	ListUsers() ([]*model.User, error)
 	ListUsersByDomain(domain string) ([]*model.User, error)
 	UpdateUser(email, displayName, passwordHash string) error
+	UpdateUserStatus(email, status string) error
 	DeleteUser(email string) error
 }
 
@@ -204,6 +210,11 @@ type ContactStore interface {
 	ListContacts(ownerEmail string) ([]*model.Contact, error)
 	UpdateContact(contact *model.Contact) error
 	DeleteContact(id string) error
+}
+
+type HistoryStore interface {
+	AddHistory(h *model.UserHistory) error
+	GetHistory(email string) ([]*model.UserHistory, error)
 }
 
 type DomainDNSStore interface {
@@ -282,6 +293,7 @@ type Database interface {
 	FilterStore
 	AutoReplyStore
 	ContactStore
+	HistoryStore
 	DomainDNSStore
 	PermissionStore
 	SignupStore
@@ -608,6 +620,38 @@ func (db *DbSQL) UpdateUser(email, displayName, passwordHash string) error {
 	username, domain := SplitEmail(email)
 	_, err := db.Conn.Exec(db.Queries[QUpdateUser], displayName, passwordHash, username, domain)
 	return err
+}
+
+func (db *DbSQL) UpdateUserStatus(email, status string) error {
+	_, err := db.Conn.Exec(db.Queries[QUpdateUserStatus], status, email)
+	return err
+}
+
+// --- History operations ---
+
+func (db *DbSQL) AddHistory(h *model.UserHistory) error {
+	_, err := db.Conn.Exec(db.Queries[QAddHistory],
+		h.UserEmail, h.ActionType, h.PerformedBy, h.ClientIP, h.Detail)
+	return err
+}
+
+func (db *DbSQL) GetHistory(email string) ([]*model.UserHistory, error) {
+	rows, err := db.Conn.Query(db.Queries[QGetHistory], email)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var history []*model.UserHistory
+	for rows.Next() {
+		h := &model.UserHistory{}
+		var actionTime interface{}
+		if err := rows.Scan(&h.UserEmail, &actionTime, &h.ActionType, &h.PerformedBy, &h.ClientIP, &h.Detail); err != nil {
+			return nil, err
+		}
+		h.ActionTime = scanTime(actionTime)
+		history = append(history, h)
+	}
+	return history, nil
 }
 
 // --- Domain DNS operations ---

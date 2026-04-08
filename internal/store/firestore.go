@@ -870,6 +870,13 @@ func (db *DbFirestore) DeleteContact(id string) error {
 	return err
 }
 
+func (db *DbFirestore) AddHistory(h *model.UserHistory) error { return nil }
+func (db *DbFirestore) GetHistory(email string) ([]*model.UserHistory, error) { return nil, nil }
+
+func (db *DbFirestore) UpdateUserStatus(email, status string) error {
+	return fmt.Errorf("UpdateUserStatus not yet implemented for Firestore")
+}
+
 // --- Domain DNS operations (stub for Firestore) ---
 
 func (db *DbFirestore) SaveDNSRecord(record *model.DomainDNSRecord) error { return nil }

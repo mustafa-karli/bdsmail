@@ -11,6 +11,17 @@ import (
 	"github.com/mustafakarli/bdsmail/internal/store"
 )
 
+// logHistory records a user event for audit trail.
+func (h *Handlers) logHistory(userEmail, actionType, performedBy, clientIP, detail string) {
+	h.store.DB.AddHistory(&model.UserHistory{
+		UserEmail:   userEmail,
+		ActionType:  actionType,
+		PerformedBy: performedBy,
+		ClientIP:    clientIP,
+		Detail:      detail,
+	})
+}
+
 // isOwner checks if user has active "owner" permission.
 func (h *Handlers) isOwner(email string) bool {
 	ok, _ := h.store.DB.HasPermission(email, "owner")
@@ -84,7 +95,9 @@ func (h *Handlers) HandleDomainUsers(w http.ResponseWriter, r *http.Request, tmp
 				} else {
 					if role == "owner" || role == "admin" {
 						h.grantPermission(newEmail, role, domain, email, time.Time{})
+						h.logHistory(newEmail, model.ActionRoleChange, email, "", "role="+role)
 					}
+					h.logHistory(newEmail, model.ActionCreated, email, "", "")
 					pd.Success = "User " + newEmail + " created"
 				}
 			}
@@ -107,15 +120,60 @@ func (h *Handlers) HandleDomainUsers(w http.ResponseWriter, r *http.Request, tmp
 			if newRole == "owner" && !h.isOwner(email) {
 				pd.Error = "Only owners can assign owner role"
 			} else if newRole == "user" {
-				// Revoke all permissions
 				perms, _ := h.store.DB.GetUserPermissions(targetEmail)
 				for _, p := range perms {
 					h.store.DB.RevokePermission(p.ID)
 				}
+				h.logHistory(targetEmail, model.ActionRoleChange, email, "", "role=user")
 				pd.Success = "Role changed to user"
 			} else {
 				h.grantPermission(targetEmail, newRole, domain, email, time.Time{})
+				h.logHistory(targetEmail, model.ActionRoleChange, email, "", "role="+newRole)
 				pd.Success = "Role updated"
+			}
+
+		case "suspend":
+			targetEmail := r.FormValue("email")
+			if targetEmail == email {
+				pd.Error = "Cannot suspend yourself"
+			} else {
+				h.store.DB.UpdateUserStatus(targetEmail, model.StatusSuspended)
+				h.logHistory(targetEmail, model.ActionSuspend, email, "", "")
+				pd.Success = "User " + targetEmail + " suspended"
+			}
+
+		case "activate":
+			targetEmail := r.FormValue("email")
+			h.store.DB.UpdateUserStatus(targetEmail, model.StatusActive)
+			h.logHistory(targetEmail, model.ActionActivate, email, "", "")
+			pd.Success = "User " + targetEmail + " activated"
+
+		case "edit":
+			targetEmail := r.FormValue("email")
+			targetUser, err := h.store.DB.GetUserByEmail(targetEmail)
+			if err == nil {
+				pd.OAuthClientID = targetEmail
+				pd.OAuthClientName = targetUser.DisplayName
+			}
+
+		case "save_edit":
+			targetEmail := r.FormValue("email")
+			displayName := strings.TrimSpace(r.FormValue("display_name"))
+			password := r.FormValue("password")
+			if password != "" && len(password) < 8 {
+				pd.Error = "Password must be at least 8 characters"
+			} else {
+				passHash := ""
+				if password != "" {
+					passHash, _ = model.HashPassword(password)
+				}
+				if displayName != "" || passHash != "" {
+					h.store.DB.UpdateUser(targetEmail, displayName, passHash)
+					if passHash != "" {
+						h.logHistory(targetEmail, model.ActionPasswordChange, email, "", "changed by admin")
+					}
+					pd.Success = "User " + targetEmail + " updated"
+				}
 			}
 		}
 	}

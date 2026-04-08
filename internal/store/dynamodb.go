@@ -1066,6 +1066,13 @@ func (db *DbDynamo) unmarshalContact(item map[string]types.AttributeValue) (*mod
 	return c, nil
 }
 
+func (db *DbDynamo) AddHistory(h *model.UserHistory) error { return nil }
+func (db *DbDynamo) GetHistory(email string) ([]*model.UserHistory, error) { return nil, nil }
+
+func (db *DbDynamo) UpdateUserStatus(email, status string) error {
+	return fmt.Errorf("UpdateUserStatus not yet implemented for DynamoDB")
+}
+
 // --- Domain DNS operations (stub for DynamoDB) ---
 
 func (db *DbDynamo) SaveDNSRecord(record *model.DomainDNSRecord) error { return nil }

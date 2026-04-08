@@ -100,6 +100,11 @@ func sqliteQueries() map[string]string {
 		QUpdateContact: `UPDATE user_contact SET vcard_data = ?, etag = ?, updated_at = datetime('now') WHERE id = ?`,
 		QDeleteContact: `DELETE FROM user_contact WHERE id = ?`,
 
+		// User status + history
+		QUpdateUserStatus: `UPDATE user_account SET status = ? WHERE id = ?`,
+		QAddHistory:       `INSERT INTO user_history (user_email, action_type, performed_by, client_ip, detail) VALUES (?, ?, ?, ?, ?)`,
+		QGetHistory:       `SELECT user_email, action_time, action_type, performed_by, client_ip, detail FROM user_history WHERE user_email = ? ORDER BY action_time DESC LIMIT 50`,
+
 		// Domain DNS
 		QSaveDNSRecord:    `INSERT OR REPLACE INTO domain_dns (domain, record_type, name, value, priority) VALUES (?, ?, ?, ?, ?)`,
 		QListDNSRecords:   `SELECT domain, record_type, name, value, priority, created_at FROM domain_dns WHERE domain = ? ORDER BY record_type, name`,

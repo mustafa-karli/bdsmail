@@ -153,6 +153,9 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request, tmpl temp
 		if h.checker != nil {
 			h.checker.RecordAuthResult(clientIP, false)
 		}
+		if user != nil {
+			h.logHistory(user.Email(), model.ActionFailedLogin, "system", clientIP.String(), "")
+		}
 		tmpl.render(w, "layout", pageData{
 			Domain: domain,
 			Error:  "Invalid username or password",
@@ -190,6 +193,7 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request, tmpl temp
 		return
 	}
 
+	h.logHistory(email, model.ActionLogin, email, clientIP.String(), "")
 	http.Redirect(w, r, "/inbox", http.StatusSeeOther)
 }
 

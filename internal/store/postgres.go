@@ -95,6 +95,11 @@ func pgsqlQueries() map[string]string {
 		QUpdateContact: `UPDATE user_contact SET vcard_data = $1, etag = $2, updated_at = NOW() WHERE id = $3`,
 		QDeleteContact: `DELETE FROM user_contact WHERE id = $1`,
 
+		// User status + history
+		QUpdateUserStatus: `UPDATE user_account SET status = $1 WHERE id = $2`,
+		QAddHistory:       `INSERT INTO user_history (user_email, action_type, performed_by, client_ip, detail) VALUES ($1, $2, $3, $4, $5)`,
+		QGetHistory:       `SELECT user_email, action_time, action_type, performed_by, client_ip, detail FROM user_history WHERE user_email = $1 ORDER BY action_time DESC LIMIT 50`,
+
 		// Domain DNS
 		QSaveDNSRecord:    `INSERT INTO domain_dns (domain, record_type, name, value, priority) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (domain, record_type, name) DO UPDATE SET value = EXCLUDED.value, priority = EXCLUDED.priority`,
 		QListDNSRecords:   `SELECT domain, record_type, name, value, priority, created_at FROM domain_dns WHERE domain = $1 ORDER BY record_type, name`,

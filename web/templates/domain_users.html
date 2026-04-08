@@ -38,12 +38,38 @@
                 <td>{{.DisplayName}}</td>
                 <td>{{.Role}}</td>
                 <td>{{.Status}}</td>
-                <td style="display:flex;gap:4px;">
-                    {{if ne .Role "owner"}}
+                <td style="display:flex;gap:4px;flex-wrap:wrap;">
                     <form method="POST" action="/settings/users" style="display:inline;">
-                        <input type="hidden" name="action" value="delete">
+                        <input type="hidden" name="action" value="edit">
                         <input type="hidden" name="email" value="{{.Email}}">
-                        <button type="submit" class="btn btn-sm btn-secondary">Delete</button>
+                        <button type="submit" class="btn btn-sm btn-secondary">Edit</button>
+                    </form>
+                    {{if eq .Status "A"}}
+                    <form method="POST" action="/settings/users" style="display:inline;">
+                        <input type="hidden" name="action" value="suspend">
+                        <input type="hidden" name="email" value="{{.Email}}">
+                        <button type="submit" class="btn btn-sm btn-secondary">Suspend</button>
+                    </form>
+                    {{else}}
+                    <form method="POST" action="/settings/users" style="display:inline;">
+                        <input type="hidden" name="action" value="activate">
+                        <input type="hidden" name="email" value="{{.Email}}">
+                        <button type="submit" class="btn btn-sm">Activate</button>
+                    </form>
+                    {{end}}
+                    {{if eq .Role "user"}}
+                    <form method="POST" action="/settings/users" style="display:inline;">
+                        <input type="hidden" name="action" value="change_role">
+                        <input type="hidden" name="email" value="{{.Email}}">
+                        <input type="hidden" name="role" value="admin">
+                        <button type="submit" class="btn btn-sm btn-secondary">→ Admin</button>
+                    </form>
+                    {{else if eq .Role "admin"}}
+                    <form method="POST" action="/settings/users" style="display:inline;">
+                        <input type="hidden" name="action" value="change_role">
+                        <input type="hidden" name="email" value="{{.Email}}">
+                        <input type="hidden" name="role" value="user">
+                        <button type="submit" class="btn btn-sm btn-secondary">→ User</button>
                     </form>
                     {{end}}
                 </td>
@@ -51,6 +77,20 @@
             {{end}}
         </tbody>
     </table>
+
+    {{if .OAuthClientID}}
+    <h3 style="color:#1976D2;margin-top:24px;margin-bottom:12px;">Edit User: {{.OAuthClientID}}</h3>
+    <form method="POST" action="/settings/users" style="background:#f5faff;padding:16px;border-radius:4px;">
+        <input type="hidden" name="action" value="save_edit">
+        <input type="hidden" name="email" value="{{.OAuthClientID}}">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;">
+            <div style="flex:1;"><label>Display Name</label><input type="text" name="display_name" value="{{.OAuthClientName}}" placeholder="Full Name"></div>
+            <div style="flex:1;"><label>New Password (leave blank to keep)</label><input type="password" name="password" placeholder="min 8 characters"></div>
+            <button type="submit" class="btn" style="height:42px;">Save</button>
+            <a href="/settings/users" class="btn btn-secondary" style="height:42px;line-height:28px;">Cancel</a>
+        </div>
+    </form>
+    {{end}}
 
     {{if .DNSRecords}}
     <h3 style="color:#1976D2;margin-top:24px;margin-bottom:12px;">DNS Records</h3>

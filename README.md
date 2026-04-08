@@ -214,6 +214,7 @@ erDiagram
     mail_content ||--o{ mail_attachment: "mail_attachments"
     user_account ||--o{ mail_content : "owner_user"
     user_permission }o--|| user_account : "user_email"
+    user_history }o--|| user_account : "user_email"
     domain_dns }o--|| domain : "domain"
     user_trusted_device }o--|| user_account : "user_email"
     user_otp }o--|| user_account : "user_email"
@@ -355,6 +356,15 @@ erDiagram
         TEXT value
         TEXT priority
         TIMESTAMPTZ created_at
+    }
+
+    user_history {
+        TEXT user_email PK
+        TIMESTAMPTZ action_time PK
+        TEXT action_type
+        TEXT performed_by
+        TEXT client_ip
+        TEXT detail
     }
 
     oauth_code {

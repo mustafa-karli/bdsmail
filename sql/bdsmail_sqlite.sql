@@ -208,3 +208,13 @@ CREATE TABLE IF NOT EXISTS domain_dns (
     created_at TEXT DEFAULT (datetime('now')),
     PRIMARY KEY (domain, record_type, name)
 );
+
+CREATE TABLE IF NOT EXISTS user_history (
+    user_email TEXT NOT NULL,
+    action_time TEXT NOT NULL DEFAULT (datetime('now')),
+    action_type TEXT NOT NULL,
+    performed_by TEXT NOT NULL DEFAULT '',
+    client_ip TEXT NOT NULL DEFAULT '',
+    detail TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (user_email, action_time)
+);
