@@ -104,16 +104,19 @@ func (h *Handlers) HandleAPISend(w http.ResponseWriter, r *http.Request) {
 
 // validateAppToken finds an app token by checking the bearer against all token hashes.
 func (h *Handlers) validateAppToken(bearer string) (*model.AppToken, error) {
-	tokens, err := h.store.DB.ListAllAppTokens()
+	// Strip bds_ak_ prefix if present
+	raw := bearer
+	if strings.HasPrefix(raw, "bds_ak_") {
+		raw = raw[7:]
+	}
+
+	// SHA-256 hash → single indexed DB lookup
+	hash := cryptoutil.SHA256Hex(raw)
+	token, err := h.store.DB.GetAppTokenByHash(hash)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("token not found")
 	}
-	for _, t := range tokens {
-		if cryptoutil.CheckSecret(t.TokenHash, bearer) {
-			return t, nil
-		}
-	}
-	return nil, fmt.Errorf("token not found")
+	return token, nil
 }
 
 // --- API Keys management page ---
@@ -149,7 +152,7 @@ func (h *Handlers) HandleAPIKeys(w http.ResponseWriter, r *http.Request, tmpl te
 						pd.Error = "Sender must be in your domain"
 					} else {
 						token, _ := cryptoutil.RandomHex(32)
-						tokenHash, _ := cryptoutil.HashSecret(token)
+						tokenHash := cryptoutil.SHA256Hex(token)
 						id, _ := cryptoutil.RandomHex(16)
 
 						if err := h.store.DB.CreateAppToken(&model.AppToken{
@@ -227,7 +230,7 @@ func (h *Handlers) HandleAPIKeysAPI(w http.ResponseWriter, r *http.Request) {
 		json.NewDecoder(r.Body).Decode(&body)
 
 		token, _ := cryptoutil.RandomHex(32)
-		tokenHash, _ := cryptoutil.HashSecret(token)
+		tokenHash := cryptoutil.SHA256Hex(token)
 		id, _ := cryptoutil.RandomHex(16)
 
 		if err := h.store.DB.CreateAppToken(&model.AppToken{

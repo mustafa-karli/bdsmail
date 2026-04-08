@@ -2,6 +2,7 @@ package cryptoutil
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 
@@ -38,4 +39,10 @@ func HashSecret(secret string) (string, error) {
 // CheckSecret compares a bcrypt hash with a plaintext secret.
 func CheckSecret(hash, secret string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(secret)) == nil
+}
+
+// SHA256Hex returns the SHA-256 hash of a string as a hex string.
+func SHA256Hex(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
 }

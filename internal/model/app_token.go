@@ -6,7 +6,7 @@ import "time"
 type AppToken struct {
 	ID          string
 	Name        string // e.g. "Registration App", "Newsletter System"
-	TokenHash   string // bcrypt hash of the token (token shown once at creation)
+	TokenHash   string // SHA-256 hash of the token (for fast indexed lookup)
 	Domain      string
 	SenderEmail string // which email address this token can send from
 	CreatedBy   string

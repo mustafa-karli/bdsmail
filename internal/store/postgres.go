@@ -96,12 +96,12 @@ func pgsqlQueries() map[string]string {
 		QDeleteContact: `DELETE FROM user_contact WHERE id = $1`,
 
 		// App tokens
-		QCreateAppToken:   `INSERT INTO app_token (id, name, token_hash, domain, sender_email, created_by) VALUES ($1, $2, $3, $4, $5, $6)`,
-		QListAppTokens:    `SELECT id, name, token_hash, domain, sender_email, created_by, created_at, last_used_at FROM app_token WHERE domain = $1 ORDER BY created_at DESC`,
-		QGetAppTokenByID:  `SELECT id, name, token_hash, domain, sender_email, created_by, created_at, last_used_at FROM app_token WHERE id = $1`,
-		QListAllAppTokens: `SELECT id, name, token_hash, domain, sender_email, created_by, created_at, last_used_at FROM app_token`,
-		QDeleteAppToken:   `DELETE FROM app_token WHERE id = $1`,
-		QUpdateTokenUsed:  `UPDATE app_token SET last_used_at = NOW() WHERE id = $1`,
+		QCreateAppToken:    `INSERT INTO app_token (id, name, token_hash, domain, sender_email, created_by) VALUES ($1, $2, $3, $4, $5, $6)`,
+		QListAppTokens:     `SELECT id, name, token_hash, domain, sender_email, created_by, created_at, last_used_at FROM app_token WHERE domain = $1 ORDER BY created_at DESC`,
+		QGetAppTokenByID:   `SELECT id, name, token_hash, domain, sender_email, created_by, created_at, last_used_at FROM app_token WHERE id = $1`,
+		QGetAppTokenByHash: `SELECT id, name, token_hash, domain, sender_email, created_by, created_at, last_used_at FROM app_token WHERE token_hash = $1`,
+		QDeleteAppToken:    `DELETE FROM app_token WHERE id = $1`,
+		QUpdateTokenUsed:   `UPDATE app_token SET last_used_at = NOW() WHERE id = $1`,
 
 		// User status + history
 		QUpdateUserStatus: `UPDATE user_account SET status = $1 WHERE id = $2`,

@@ -230,3 +230,4 @@ CREATE TABLE IF NOT EXISTS app_token (
     last_used_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_app_token_domain ON app_token(domain);
+CREATE INDEX IF NOT EXISTS idx_app_token_hash ON app_token(token_hash);

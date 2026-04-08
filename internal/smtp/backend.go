@@ -37,18 +37,17 @@ func (b *Backend) checkAppToken(senderEmail, password string) bool {
 	if !strings.HasPrefix(password, "bds_ak_") {
 		return false
 	}
-	tokens, err := b.store.DB.ListAllAppTokens()
+	bareToken := password[7:] // strip "bds_ak_" prefix
+	hash := cryptoutil.SHA256Hex(bareToken)
+	token, err := b.store.DB.GetAppTokenByHash(hash)
 	if err != nil {
 		return false
 	}
-	bareToken := password[7:] // strip "bds_ak_" prefix
-	for _, t := range tokens {
-		if t.SenderEmail == senderEmail && cryptoutil.CheckSecret(t.TokenHash, bareToken) {
-			b.store.DB.UpdateTokenLastUsed(t.ID)
-			return true
-		}
+	if token.SenderEmail != senderEmail {
+		return false
 	}
-	return false
+	b.store.DB.UpdateTokenLastUsed(token.ID)
+	return true
 }
 
 func (b *Backend) NewSession(c *gosmtp.Conn) (gosmtp.Session, error) {
