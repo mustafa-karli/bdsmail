@@ -2,7 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHistory('/app/'),
   routes: [
     { path: '/login', component: () => import('../views/LoginView.vue'), meta: { public: true } },
     { path: '/signup', component: () => import('../views/SignupView.vue'), meta: { public: true } },

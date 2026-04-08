@@ -20,7 +20,7 @@ body {
 /* Navigation */
 nav {
     background-color: #2196F3;
-    padding: 12px 0;
+    padding: 6px 0;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
@@ -32,21 +32,25 @@ nav .container {
 
 nav .brand {
     color: #fff;
-    font-size: 1.4em;
-    font-weight: bold;
     text-decoration: none;
+    display: flex;
+    align-items: center;
+}
+
+nav .nav-links svg {
+    vertical-align: middle;
 }
 
 nav .nav-links {
     display: flex;
-    gap: 16px;
+    gap: 8px;
     align-items: center;
 }
 
 nav a {
     color: #fff;
     text-decoration: none;
-    padding: 6px 12px;
+    padding: 4px 8px;
     border-radius: 4px;
     transition: background-color 0.2s;
 }
