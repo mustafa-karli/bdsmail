@@ -20,10 +20,9 @@ var (
 	FlagHTTPPort    = flag.Int("http_port", 80, "HTTP port for ACME challenges")
 	FlagDBType      = flag.String("db_type", "postgres", "Database backend: postgres or dynamodb")
 	FlagDynamoDBRegion = flag.String("dynamodb_region", "us-east-1", "AWS region for DynamoDB")
-	FlagBucketType  = flag.String("bucket_type", "", "Object storage: gcs, s3, or empty (disabled)")
-	FlagGCSBucket   = flag.String("gcs_bucket", "", "GCS bucket name")
-	FlagS3Region    = flag.String("s3_region", "us-east-1", "AWS region for S3")
-	FlagS3Bucket    = flag.String("s3_bucket", "", "S3 bucket name")
+	FlagS3Region    = flag.String("s3_region", "us-east-1", "S3 region (use 'auto' for R2)")
+	FlagS3Bucket    = flag.String("s3_bucket", "", "S3/R2 bucket name")
+	FlagS3Endpoint  = flag.String("s3_endpoint", "", "Custom S3 endpoint (for R2: https://<account-id>.r2.cloudflarestorage.com)")
 	FlagDKIMKeyDir  = flag.String("dkim_key_dir", "/opt/bdsmail/dkim", "DKIM private keys directory")
 	FlagDKIMSelector = flag.String("dkim_selector", "default", "DKIM selector name")
 	FlagSSLDir      = flag.String("ssl_dir", "/opt/bdsmail/ssl", "Per-domain SSL certificate directory")
@@ -42,7 +41,6 @@ type Config struct {
 	HTTPSPort    int
 	HTTPPort     int
 	SSLDir       string
-	GCSBucket    string
 	DatabaseURL  string // loaded from secrets
 	DKIMKeyDir   string
 	DKIMSelector string
@@ -54,9 +52,9 @@ type Config struct {
 	RelayPassword string // loaded from secrets
 	DBType       string
 	DynamoDBRegion     string
-	BucketType         string
 	S3Region           string
 	S3Bucket           string
+	S3Endpoint         string
 	MaxAttachmentBytes int64
 	AmplifyURL         string
 	MailHostname       string
@@ -84,15 +82,14 @@ func Load() *Config {
 		HTTPSPort:    *common.HTTPSPort,
 		HTTPPort:     *FlagHTTPPort,
 		SSLDir:       *FlagSSLDir,
-		GCSBucket:    *FlagGCSBucket,
 		DKIMKeyDir:   *FlagDKIMKeyDir,
 		DKIMSelector: *FlagDKIMSelector,
 		AcmeWebroot:  *FlagAcmeWebroot,
 		DBType:       *FlagDBType,
 		DynamoDBRegion:     *FlagDynamoDBRegion,
-		BucketType:         *FlagBucketType,
 		S3Region:           *FlagS3Region,
 		S3Bucket:           *FlagS3Bucket,
+		S3Endpoint:         *FlagS3Endpoint,
 		MaxAttachmentBytes: *FlagMaxAttachmentBytes,
 		AmplifyURL:         *FlagAmplifyURL,
 		MailHostname:       *FlagMailHostname,

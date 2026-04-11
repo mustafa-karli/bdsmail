@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"crypto"
 	"crypto/x509"
 	"encoding/json"
@@ -37,7 +36,6 @@ func main() {
 	flag.Parse()
 
 	cfg := config.Load()
-	ctx := context.Background()
 
 	// Handle adddomain command (talks to running server via admin API)
 	if *addDomain != "" {
@@ -88,24 +86,18 @@ func main() {
 
 	// Initialize object storage (for attachments)
 	var bucket store.ObjectStore
-	switch cfg.BucketType {
-	case "gcs":
+	if cfg.S3Bucket != "" {
 		var bucketErr error
-		bucket, bucketErr = store.NewBasisGCSBucket(ctx, cfg.GCSBucket)
+		bucket, bucketErr = store.NewS3Bucket(cfg.S3Bucket, cfg.S3Region, cfg.S3Endpoint)
 		if bucketErr != nil {
-			log.Printf("warning: GCS bucket init failed, attachments disabled: %v", bucketErr)
+			log.Printf("warning: S3/R2 bucket init failed, attachments disabled: %v", bucketErr)
 		} else {
 			defer bucket.Close()
-			log.Printf("Object storage: GCS bucket %s (via basis)", cfg.GCSBucket)
-		}
-	case "s3":
-		var bucketErr error
-		bucket, bucketErr = store.NewBasisS3Bucket(cfg.S3Bucket)
-		if bucketErr != nil {
-			log.Printf("warning: S3 bucket init failed, attachments disabled: %v", bucketErr)
-		} else {
-			defer bucket.Close()
-			log.Printf("Object storage: S3 bucket %s (via basis)", cfg.S3Bucket)
+			endpoint := "AWS S3"
+			if cfg.S3Endpoint != "" {
+				endpoint = "R2"
+			}
+			log.Printf("Object storage: %s bucket %s", endpoint, cfg.S3Bucket)
 		}
 	}
 

@@ -67,14 +67,15 @@ A multi-domain mail server written in Go. Single binary, zero required external 
 
 ### Infrastructure
 - **Single Go binary** — ~75MB, zero runtime dependencies
-- **PostgreSQL** — Primary database (self-hosted or AWS RDS)
-- **DynamoDB** — Secondary database option for analytics (AWS free tier)
-- **Amazon S3** — Attachment storage with normalized `mail_attachment` table (3NF)
-- **Amazon SES** — Outbound relay with auto domain verification
-- **CLI flags + SecretProvider** — No .env file; secrets via local JSON, AWS Secrets Manager, or GCP Secret Manager
-- **Shared library (basis)** — Reuses `github.com/mustafa-karli/basis` for secrets, storage, HTTP utilities
-- **Daily backups** — pg_dump to S3 with 7-day local / 30-day remote rotation
-- **Daily cert renewal** — Per-domain certs checked and copied only when renewed
+- **Hetzner VPS** — CX22 (2 vCPU, 4GB RAM, 40GB NVMe) for ~€4.50/mo
+- **PostgreSQL 18** — Self-hosted, tuned for 4GB RAM
+- **Cloudflare R2** — S3-compatible attachment + backup storage (10GB free)
+- **SendGrid** — Outbound email relay (100/day free, no approval needed)
+- **Cloudflare DNS** — Free plan with DNS-only mode for mail subdomains
+- **CLI flags + SecretProvider** — No .env file; secrets via local JSON or cloud secret managers
+- **Shared library (basis)** — Reuses `github.com/mustafa-karli/basis` for secrets, HTTP utilities
+- **Daily backups** — pg_dump to R2 via rclone, 7-day local / 30-day remote rotation
+- **Daily cert renewal** — Per-domain Let's Encrypt certs, auto-renewed
 
 ## Architecture
 
@@ -354,13 +355,13 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed step-by-step instructions.
 
 | Component | Service | Cost |
 |-----------|---------|------|
-| Compute | AWS Lightsail nano ($5/mo) | $5.00 |
-| Database | Self-hosted PostgreSQL (on instance) | $0 |
-| Attachments + Backups | Amazon S3 | ~$0.05 |
-| Outbound email | Amazon SES | ~$0.10/1K emails |
-| **Total** | | **~$5-6/month** |
-
-Migration path: self-hosted PG → AWS RDS when demand grows (`pg_dump` → `pg_restore`, 15 minutes).
+| Compute | Hetzner CX22 (2 vCPU, 4GB RAM) | €4.50/mo |
+| Database | Self-hosted PostgreSQL 18 | $0 |
+| Attachments + Backups | Cloudflare R2 (S3-compatible) | $0 (10GB free) |
+| Outbound email | SendGrid (100/day free) | $0 |
+| DNS + CDN | Cloudflare | $0 |
+| TLS | Let's Encrypt (per-domain SNI) | $0 |
+| **Total** | | **~$5/month** |
 
 ## Web Interface
 

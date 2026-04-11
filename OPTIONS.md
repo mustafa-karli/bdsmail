@@ -2,74 +2,46 @@
 
 Design decisions, alternatives considered, and current implementation choices for bdsmail.
 
-## Deployment Options
+## Deployment Stack
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for full step-by-step instructions.
 
-### Option 1: AWS
+| Component | Service | Cost | Why |
+|-----------|---------|------|-----|
+| **Compute** | Hetzner CX22 | €4.50/mo | 2 vCPU, 4GB RAM, 40GB NVMe. Port 25 open. |
+| **Database** | Self-hosted PostgreSQL 18 | $0 | Full SQL, full-text search, on same instance |
+| **Outbound relay** | SendGrid | $0 | 100/day free. Instant approval, no sandbox. |
+| **Attachments + Backups** | Cloudflare R2 | $0 | S3-compatible, 10GB free tier |
+| **DNS** | Cloudflare | $0 | Free plan, DNS-only mode for mail subdomains |
+| **TLS** | Let's Encrypt | $0 | Per-domain SNI certificates |
 
-Lightsail + SES always on. Choose database:
+### Why This Stack
 
-| DB Option | Cost | Search | Managed |
-|-----------|------|--------|---------|
-| Self-hosted PostgreSQL | **~$5-6/mo** (recommended) | Full | No → migrate to RDS later |
-| DynamoDB (free tier) | **~$6/mo** | Scan only | Yes |
-| RDS PostgreSQL | **~$20/mo** | Full | Yes |
+| Decision | Alternatives Considered | Why Chosen |
+|----------|------------------------|------------|
+| **Hetzner over AWS** | Lightsail, EC2 | Better specs for the price (4GB vs 512MB). Port 25 open. No SES approval needed. |
+| **SendGrid over SES** | SES, Mailgun, Postmark | SES rejected sandbox exit. SendGrid approves instantly with free 100/day. |
+| **R2 over S3** | S3, GCS | S3-compatible API, 10GB free, no egress fees. Already used for daxoom. |
+| **Self-hosted PG over managed** | RDS, Cloud SQL, DynamoDB | $0 cost, full SQL, same instance = zero latency. pg_dump for backups. |
+| **Cloudflare over Route 53** | Route 53, GoDaddy | Free DNS, already managing domains there. |
 
-### Option 2: GCP
+### Database
 
-e2-micro VM always on. Choose relay and database:
+Self-hosted PostgreSQL 18 on the same Hetzner VPS. Tuned for 4GB RAM.
 
-| DB Option | Cost | Search | Managed |
-|-----------|------|--------|---------|
-| Self-hosted PostgreSQL | **~$10.50/mo** | Full | No → migrate to Cloud SQL later |
-| Firestore (free tier) | **~$10.50/mo** | Client-side | Yes |
-| Cloud SQL PostgreSQL | **~$20.50/mo** | Full | Yes |
+- **Backups**: Daily pg_dump → gzip → Cloudflare R2 via rclone (7-day local, 30-day remote)
+- **Migration path**: If demand grows, pg_dump → pg_restore to any managed PostgreSQL
 
-### Recommended: Self-Hosted PostgreSQL on Lightsail
+### Outbound Relay
 
-Single Lightsail instance runs both the app and PostgreSQL. Full SQL, full-text search, zero managed DB cost. Daily pg_dump backups to S3 with 7-day local / 30-day remote rotation.
+| Service | Cost | Free Tier | Approval |
+|---------|------|-----------|----------|
+| **SendGrid** (current) | $0 | 100/day forever | Instant |
+| Mailgun | $15/mo | 1K/mo for 3 months | Quick |
+| Postmark | $1.25/1K | None | Instant |
+| Amazon SES | $0.10/1K | Sandbox only | **Rejected** (multi-tenant concern) |
 
-**Migration path**: When demand grows, `pg_dump` → `pg_restore` to RDS in 15 minutes. Same connection string change, zero code changes.
-
-### Lightsail vs EC2
-
-| Aspect | Lightsail $5/mo | EC2 t4g.micro |
-|--------|----------------|---------------|
-| CPU/RAM | 2 vCPU, 1GB | 2 vCPU, 1GB (burstable) |
-| Storage | 40GB SSD included | EBS separate (~$0.80/10GB) |
-| Transfer | 2TB included | 100GB free, then $0.09/GB |
-| Static IP | Free | $3.65/mo (Elastic IP) |
-| Long-term | $5/mo flat forever | $0 for 12 months, then ~$10+/mo |
-
-Lightsail is simpler and cheaper long-term for a mail server.
-
----
-
-## Database Backends
-
-| Backend | Cost | Search | Managed | Migration to RDS |
-|---------|------|--------|---------|-----------------|
-| **Self-hosted PostgreSQL** | $0 | Full (ILIKE, tsvector) | No | pg_dump → pg_restore |
-| **RDS PostgreSQL** | $12-15/mo | Full | Yes | Already there |
-| **DynamoDB** | $0 (free tier) | Scan only | Yes | Schema rewrite needed |
-| **Firestore** | $0 (free tier) | Client-side | Yes | Schema rewrite needed |
-
-### DynamoDB Performance by Operation
-
-| Operation | Approach | Performance | Concern |
-|-----------|----------|-------------|---------|
-| Get message by ID | GSI lookup | Fast | None |
-| List messages by folder | Query partition + filter | Fast | None |
-| Save/delete message | PutItem/DeleteItem | Fast | None |
-| Count unread | Query + client count | Moderate | Reads all messages |
-| **Search messages** | **Full scan + client filter** | **Slow** | **Degrades with mailbox size** |
-
-### Recommendation
-
-Start with **self-hosted PostgreSQL** (`--db_type=postgres`). Full SQL, full search, zero cost, proven migration path to RDS. DynamoDB is viable if you don't need search.
-
-**Avoid cross-provider databases** (Neon, Supabase, PlanetScale) — egress cost (~$0.09/GB) and latency (10-50ms) when hosted outside AWS.
+Relay config is in `secrets.json` — switch anytime by changing `relay_host`, `relay_user`, `relay_password`.
 
 ---
 
@@ -122,15 +94,17 @@ Attachments are stored in a normalized `mail_attachment` table (3NF) with bucket
 
 ---
 
-## Outbound Relay
+## Object Storage
 
-| Service | Cost (10K emails/mo) | Notes |
-|---------|---------------------|-------|
-| Amazon SES | ~$1.00 | Cheapest. Auto-verified during domain onboarding |
-| Mailgun | $15.00 | Basic plan |
-| SendGrid | $19.95 | Essentials plan |
+Cloudflare R2 (S3-compatible). Single bucket for attachments and backups.
 
-SES domain verification + DKIM tokens are issued automatically when adding a domain (if relay is SES).
+| Config Flag | Value |
+|-------------|-------|
+| `--s3_bucket` | `bdsmail` |
+| `--s3_region` | `auto` |
+| `--s3_endpoint` | `https://<account-id>.r2.cloudflarestorage.com` |
+
+R2 uses the same AWS S3 SDK — just set a custom endpoint. No code changes needed.
 
 ---
 
@@ -198,12 +172,14 @@ No `.env` file — all config via CLI flags passed to the binary or systemd `Exe
 bdsmail \
   --db_type=postgres \
   --ssl_dir=/opt/bdsmail/ssl \
-  --bucket_type=s3 \
-  --s3_bucket=bdsmail-attachments \
+  --s3_bucket=bdsmail \
+  --s3_region=auto \
+  --s3_endpoint=https://<account-id>.r2.cloudflarestorage.com \
   --secret_mode=local \
   --keystore=/opt/bdsmail/sec/secrets.json \
-  --smtp_port=25 \
-  --https_port=443
+  --inbound_smtp_port=25 \
+  --https_port=443 \
+  --mail_hostname=mailsrv.bdscont.com
 ```
 
 ### Secrets Management

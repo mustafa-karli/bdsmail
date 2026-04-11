@@ -3,53 +3,71 @@ package store
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 
-	"github.com/mustafa-karli/basis/port"
-	"github.com/mustafa-karli/basis/service/storage"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
-// BasisBucket adapts basis port.ObjectStorage to bdsmail's ObjectStore interface.
-type BasisBucket struct {
-	storage    port.ObjectStorage
+// S3Bucket provides S3-compatible object storage (works with AWS S3 and Cloudflare R2).
+type S3Bucket struct {
+	client     *s3.Client
 	bucketName string
 }
 
-// NewBasisS3Bucket creates an S3-backed ObjectStore using basis storage.
-func NewBasisS3Bucket(bucketName string) (*BasisBucket, error) {
-	s, err := storage.NewStorageS3()
+// NewS3Bucket creates an S3-compatible ObjectStore.
+// For R2: endpoint = "https://<account-id>.r2.cloudflarestorage.com", region = "auto"
+// For AWS S3: endpoint = "" (uses default), region = "us-west-2"
+func NewS3Bucket(bucketName, region, endpoint string) (*S3Bucket, error) {
+	cfg, err := awsconfig.LoadDefaultConfig(context.Background(), awsconfig.WithRegion(region))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to load AWS config: %w", err)
 	}
-	return &BasisBucket{storage: s, bucketName: bucketName}, nil
+
+	var client *s3.Client
+	if endpoint != "" {
+		// Custom endpoint (Cloudflare R2 or MinIO)
+		client = s3.NewFromConfig(cfg, func(o *s3.Options) {
+			o.BaseEndpoint = &endpoint
+		})
+	} else {
+		client = s3.NewFromConfig(cfg)
+	}
+
+	return &S3Bucket{client: client, bucketName: bucketName}, nil
 }
 
-// NewBasisGCSBucket creates a GCS-backed ObjectStore using basis storage.
-func NewBasisGCSBucket(ctx context.Context, bucketName string) (*BasisBucket, error) {
-	s, err := storage.NewStorageGCS(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return &BasisBucket{storage: s, bucketName: bucketName}, nil
-}
-
-func (b *BasisBucket) Close() error {
+func (b *S3Bucket) Close() error {
 	return nil
 }
 
-func (b *BasisBucket) Write(ctx context.Context, key string, data []byte, contentType string) error {
-	return b.storage.Upload(ctx, b.bucketName, key, bytes.NewReader(data), contentType)
+func (b *S3Bucket) Write(ctx context.Context, key string, data []byte, contentType string) error {
+	_, err := b.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:      &b.bucketName,
+		Key:         &key,
+		Body:        bytes.NewReader(data),
+		ContentType: &contentType,
+	})
+	return err
 }
 
-func (b *BasisBucket) Read(ctx context.Context, key string) ([]byte, error) {
-	rc, err := b.storage.Download(ctx, b.bucketName, key)
+func (b *S3Bucket) Read(ctx context.Context, key string) ([]byte, error) {
+	result, err := b.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: &b.bucketName,
+		Key:    &key,
+	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("S3 read failed: %w", err)
 	}
-	defer rc.Close()
-	return io.ReadAll(rc)
+	defer result.Body.Close()
+	return io.ReadAll(result.Body)
 }
 
-func (b *BasisBucket) Delete(ctx context.Context, key string) error {
-	return b.storage.Delete(ctx, b.bucketName, key)
+func (b *S3Bucket) Delete(ctx context.Context, key string) error {
+	_, err := b.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: &b.bucketName,
+		Key:    &key,
+	})
+	return err
 }
